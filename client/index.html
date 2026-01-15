@@ -273,6 +273,76 @@
       margin-top: 5px;
     }
 
+    /* Name Input */
+    .name-input-section {
+      margin-bottom: 20px;
+    }
+    .name-input-section label {
+      display: block;
+      font-size: 14px;
+      color: #888;
+      margin-bottom: 8px;
+    }
+    #player-name {
+      width: 100%;
+      padding: 12px 15px;
+      font-size: 18px;
+      border: 2px solid #555;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.5);
+      color: white;
+      text-align: center;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    #player-name:focus {
+      border-color: #f39c12;
+    }
+
+    /* Team Selection */
+    .team-section {
+      margin-bottom: 25px;
+    }
+    .team-section label {
+      display: block;
+      font-size: 14px;
+      color: #888;
+      margin-bottom: 10px;
+    }
+    .team-buttons {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+    }
+    .team-btn {
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: bold;
+      border: 2px solid #555;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.5);
+      color: #aaa;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .team-btn:hover {
+      border-color: #888;
+      color: white;
+    }
+    .team-btn.selected {
+      border-color: #f39c12;
+      color: white;
+      background: rgba(243, 156, 18, 0.2);
+    }
+    .team-btn.red-team.selected {
+      border-color: #e74c3c;
+      background: rgba(231, 76, 60, 0.3);
+    }
+    .team-btn.blue-team.selected {
+      border-color: #3498db;
+      background: rgba(52, 152, 219, 0.3);
+    }
+
     /* Pause Menu */
     #pause-menu {
       position: absolute;
@@ -355,6 +425,397 @@
       font-size: 14px;
       color: #aaa;
     }
+
+    /* Death Screen */
+    #death-screen {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      pointer-events: none;
+    }
+    #death-screen.hidden {
+      display: none;
+    }
+    #death-screen h1 {
+      font-size: 72px;
+      color: #c0392b;
+      text-shadow: 4px 4px 8px black, 0 0 30px rgba(192, 57, 43, 0.5);
+      letter-spacing: 8px;
+      margin-bottom: 20px;
+      animation: deathPulse 0.5s ease-out;
+    }
+    @keyframes deathPulse {
+      0% { transform: scale(1.5); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    #death-message {
+      font-size: 24px;
+      color: #e74c3c;
+      text-shadow: 2px 2px 4px black;
+      margin-bottom: 30px;
+    }
+    #respawn-countdown {
+      font-size: 18px;
+      color: #fff;
+      text-shadow: 1px 1px 2px black;
+    }
+    #respawn-timer {
+      font-size: 24px;
+      font-weight: bold;
+      color: #f39c12;
+    }
+
+    /* Chat Box */
+    #chat-box {
+      position: absolute;
+      bottom: 100px;
+      left: 20px;
+      width: 350px;
+      pointer-events: none;
+    }
+    #chat-messages {
+      max-height: 150px;
+      overflow-y: auto;
+      padding: 10px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 5px;
+      margin-bottom: 5px;
+    }
+    #chat-messages:empty {
+      display: none;
+    }
+    .chat-message {
+      margin-bottom: 5px;
+      font-size: 14px;
+      text-shadow: 1px 1px 2px black;
+      word-wrap: break-word;
+    }
+    .chat-message .name {
+      font-weight: bold;
+    }
+    .chat-message .name.red-team {
+      color: #e74c3c;
+    }
+    .chat-message .name.blue-team {
+      color: #3498db;
+    }
+    .chat-message .name.solo {
+      color: #f39c12;
+    }
+    .chat-message.team-only {
+      opacity: 0.9;
+    }
+    .chat-message.team-only::before {
+      content: '[TEAM] ';
+      color: #2ecc71;
+    }
+    #chat-input {
+      width: 100%;
+      padding: 8px 12px;
+      font-size: 14px;
+      border: none;
+      border-radius: 5px;
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      outline: none;
+      pointer-events: auto;
+      display: none;
+    }
+    #chat-input.active {
+      display: block;
+    }
+
+    /* Kill Feed */
+    #kill-feed {
+      position: absolute;
+      top: 100px;
+      right: 20px;
+      width: 300px;
+      text-align: right;
+    }
+    .kill-entry {
+      padding: 5px 10px;
+      margin-bottom: 5px;
+      font-size: 14px;
+      text-shadow: 1px 1px 2px black;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 3px;
+      animation: killFadeIn 0.3s ease-out;
+    }
+    @keyframes killFadeIn {
+      from { opacity: 0; transform: translateX(20px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+    .kill-entry .killer {
+      color: #e74c3c;
+    }
+    .kill-entry .victim {
+      color: #fff;
+    }
+    .kill-entry .killer.red-team {
+      color: #e74c3c;
+    }
+    .kill-entry .killer.blue-team {
+      color: #3498db;
+    }
+    .kill-entry .victim.red-team {
+      color: #ff6b6b;
+    }
+    .kill-entry .victim.blue-team {
+      color: #74b9ff;
+    }
+
+    /* Vehicle HUD */
+    #vehicle-hud {
+      position: absolute;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 15px 30px;
+      border-radius: 10px;
+      border: 2px solid #4a6741;
+    }
+    #vehicle-hud.hidden {
+      display: none;
+    }
+    #vehicle-hud .vehicle-name {
+      font-size: 14px;
+      color: #4a6741;
+      margin-bottom: 5px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+    }
+    #vehicle-hud .speedometer {
+      font-size: 36px;
+      font-weight: bold;
+      color: white;
+    }
+    #vehicle-hud .speed-unit {
+      font-size: 14px;
+      color: #888;
+      margin-left: 5px;
+    }
+    #vehicle-hud .vehicle-controls {
+      margin-top: 10px;
+      font-size: 12px;
+      color: #666;
+    }
+    #vehicle-hud .vehicle-controls span {
+      color: #f39c12;
+    }
+    #vehicle-hud.motorcycle {
+      border-color: #cc0000;
+    }
+    #vehicle-hud.motorcycle .vehicle-name {
+      color: #cc0000;
+    }
+
+    /* Vehicle prompt (when near a vehicle) */
+    #vehicle-prompt {
+      position: absolute;
+      bottom: 200px;
+      left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 10px 20px;
+      border-radius: 5px;
+      font-size: 16px;
+      color: white;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    #vehicle-prompt.visible {
+      opacity: 1;
+    }
+    #vehicle-prompt span {
+      color: #f39c12;
+      font-weight: bold;
+    }
+
+    /* Minimap */
+    #minimap-container {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      width: 180px;
+      height: 180px;
+      background: rgba(0, 0, 0, 0.6);
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      overflow: hidden;
+    }
+    #minimap {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+    }
+    #minimap-border {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      border: 3px solid rgba(100, 100, 100, 0.5);
+      box-sizing: border-box;
+      pointer-events: none;
+    }
+    #minimap-center {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 0;
+      height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-bottom: 10px solid #00ff00;
+      pointer-events: none;
+    }
+    #minimap-coords {
+      position: absolute;
+      bottom: -25px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 11px;
+      color: #888;
+      text-shadow: 1px 1px 2px black;
+      white-space: nowrap;
+    }
+
+    /* Pickup messages */
+    .pickup-message {
+      position: absolute;
+      top: 40%;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 24px;
+      font-weight: bold;
+      text-shadow: 2px 2px 4px black;
+      pointer-events: none;
+      transition: opacity 0.5s, transform 0.5s;
+      animation: pickupPop 0.3s ease-out;
+    }
+    @keyframes pickupPop {
+      0% { transform: translateX(-50%) scale(0.5); opacity: 0; }
+      50% { transform: translateX(-50%) scale(1.2); }
+      100% { transform: translateX(-50%) scale(1); opacity: 1; }
+    }
+
+    /* Scoreboard */
+    #scoreboard {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.9);
+      border: 2px solid #555;
+      border-radius: 10px;
+      padding: 20px;
+      min-width: 500px;
+      display: none;
+      pointer-events: none;
+    }
+    #scoreboard.visible {
+      display: block;
+    }
+    #scoreboard h2 {
+      text-align: center;
+      margin-bottom: 15px;
+      color: #f39c12;
+      font-size: 24px;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+    }
+    #scoreboard table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    #scoreboard th {
+      text-align: left;
+      padding: 8px 12px;
+      border-bottom: 2px solid #444;
+      color: #888;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+    #scoreboard th:not(:first-child) {
+      text-align: center;
+    }
+    #scoreboard td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #333;
+      font-size: 14px;
+    }
+    #scoreboard td:not(:first-child) {
+      text-align: center;
+    }
+    #scoreboard tr.you {
+      background: rgba(243, 156, 18, 0.2);
+    }
+    #scoreboard .player-name {
+      font-weight: bold;
+    }
+    #scoreboard .player-name.red-team {
+      color: #e74c3c;
+    }
+    #scoreboard .player-name.blue-team {
+      color: #3498db;
+    }
+    #scoreboard .player-name.solo {
+      color: #f39c12;
+    }
+    #scoreboard .kills {
+      color: #2ecc71;
+    }
+    #scoreboard .deaths {
+      color: #e74c3c;
+    }
+    #scoreboard .kd {
+      color: #f39c12;
+    }
+    #scoreboard-hint {
+      text-align: center;
+      margin-top: 15px;
+      font-size: 12px;
+      color: #666;
+    }
+
+    /* Time display */
+    #time-display {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 14px;
+      color: rgba(255, 255, 255, 0.8);
+      text-shadow: 1px 1px 3px black;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 5px 15px;
+      border-radius: 15px;
+    }
+
+    /* Flashlight indicator */
+    #flashlight-indicator {
+      position: absolute;
+      bottom: 120px;
+      left: 20px;
+      font-size: 12px;
+      color: #ffee88;
+      text-shadow: 0 0 10px #ffee88, 0 0 20px #ffaa00;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 5px 10px;
+      border-radius: 5px;
+      border: 1px solid #ffee88;
+    }
+    #flashlight-indicator.hidden {
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -362,6 +823,14 @@
     <div id="damage-overlay"></div>
     <div id="pause-overlay"></div>
     <div id="crosshair" class="hidden"></div>
+
+    <!-- Minimap -->
+    <div id="minimap-container">
+      <canvas id="minimap" width="180" height="180"></canvas>
+      <div id="minimap-border"></div>
+      <div id="minimap-center"></div>
+      <div id="minimap-coords">0, 0</div>
+    </div>
 
     <div id="health-text">Health</div>
     <div id="health-bar">
@@ -387,11 +856,52 @@
     <div id="player-count">Players: 1</div>
     <div id="enemy-count">Enemies: 0</div>
     <div id="difficulty-display"></div>
+    <div id="time-display">06:00 - Dawn</div>
+    <div id="flashlight-indicator" class="hidden"></div>
+
+    <!-- Chat Box -->
+    <div id="chat-box">
+      <div id="chat-messages"></div>
+      <input type="text" id="chat-input" placeholder="Press T to chat..." maxlength="100">
+    </div>
+
+    <!-- Kill Feed -->
+    <div id="kill-feed"></div>
+
+    <!-- Vehicle HUD -->
+    <div id="vehicle-hud" class="hidden">
+      <div class="vehicle-name">Jeep</div>
+      <div class="speedometer">
+        <span id="speed-value">0</span>
+        <span class="speed-unit">km/h</span>
+      </div>
+      <div class="vehicle-controls">
+        <span>WASD</span> to drive | <span>E</span> to exit
+      </div>
+    </div>
+
+    <!-- Vehicle Enter Prompt -->
+    <div id="vehicle-prompt">Press <span>E</span> to enter vehicle</div>
 
     <!-- Main Menu -->
     <div id="main-menu">
       <h1>COMBAT</h1>
       <p class="subtitle">A Multiplayer Survival Shooter</p>
+
+      <div class="name-input-section">
+        <label for="player-name">Your Name</label>
+        <input type="text" id="player-name" maxlength="16" placeholder="Enter name..." value="Player">
+      </div>
+
+      <div class="team-section">
+        <label>Team</label>
+        <div class="team-buttons">
+          <button class="team-btn selected" data-team="none">Solo</button>
+          <button class="team-btn red-team" data-team="red">Red Team</button>
+          <button class="team-btn blue-team" data-team="blue">Blue Team</button>
+        </div>
+      </div>
+
       <h2>Select Difficulty</h2>
       <div class="difficulty-buttons">
         <button class="difficulty-btn easy" data-difficulty="easy">
@@ -417,6 +927,9 @@
           <span>Left Click - Shoot</span>
           <span>R - Reload</span>
           <span>1/2/3 - Weapons</span>
+          <span>E - Enter/Exit Vehicle</span>
+          <span>T - All Chat</span>
+          <span>Y - Team Chat</span>
           <span>ESC - Pause</span>
         </div>
       </div>
@@ -430,6 +943,31 @@
         <button class="pause-btn quit" id="quit-btn">Quit to Menu</button>
       </div>
       <p class="pause-info">Press ESC to resume</p>
+    </div>
+
+    <!-- Death Screen -->
+    <div id="death-screen" class="hidden">
+      <h1>YOU DIED</h1>
+      <p id="death-message">Killed by enemy</p>
+      <p id="respawn-countdown">Respawning in <span id="respawn-timer">3</span>...</p>
+    </div>
+
+    <!-- Scoreboard -->
+    <div id="scoreboard">
+      <h2>Scoreboard</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Player</th>
+            <th>Kills</th>
+            <th>Deaths</th>
+            <th>K/D</th>
+          </tr>
+        </thead>
+        <tbody id="scoreboard-body">
+        </tbody>
+      </table>
+      <p id="scoreboard-hint">Hold TAB to view</p>
     </div>
   </div>
   <script type="module" src="/src/main.js"></script>

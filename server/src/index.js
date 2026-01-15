@@ -49,19 +49,11 @@ const ENEMY_TYPES = {
   }
 };
 
-// Enemy spawn points around the map
-const SPAWN_POINTS = [
-  { x: 30, z: 30 },
-  { x: -40, z: 50 },
-  { x: 60, z: -30 },
-  { x: -50, z: -50 },
-  { x: 10, z: 70 },
-  { x: -70, z: 10 },
-  { x: 80, z: 60 },
-  { x: -30, z: -70 },
-  { x: 50, z: 50 },
-  { x: -60, z: 30 }
-];
+// Enemy configuration for infinite map
+const MAX_ENEMIES = 15;
+const SPAWN_DISTANCE_MIN = 40;
+const SPAWN_DISTANCE_MAX = 80;
+const DESPAWN_DISTANCE = 150;
 
 // Store enemies
 const enemies = {};
@@ -90,14 +82,72 @@ function spawnEnemy(type, x, z) {
   return id;
 }
 
-function initializeEnemies() {
-  // Spawn enemies at each spawn point
-  SPAWN_POINTS.forEach((point, index) => {
-    // Alternate enemy types
+function getRandomSpawnNearPlayers() {
+  const playerList = Object.values(players);
+  if (playerList.length === 0) return { x: 0, z: 0 };
+
+  // Pick a random player to spawn near
+  const player = playerList[Math.floor(Math.random() * playerList.length)];
+
+  // Random angle and distance
+  const angle = Math.random() * Math.PI * 2;
+  const distance = SPAWN_DISTANCE_MIN + Math.random() * (SPAWN_DISTANCE_MAX - SPAWN_DISTANCE_MIN);
+
+  return {
+    x: player.x + Math.cos(angle) * distance,
+    z: player.z + Math.sin(angle) * distance
+  };
+}
+
+function spawnEnemiesNearPlayers() {
+  const playerList = Object.values(players);
+  if (playerList.length === 0) return;
+
+  // Count alive enemies
+  const aliveEnemies = Object.values(enemies).filter(e => e.health > 0).length;
+
+  // Spawn more enemies if below max
+  while (aliveEnemies + Object.keys(enemies).length < MAX_ENEMIES && Object.keys(enemies).length < MAX_ENEMIES) {
     const types = ['soldier', 'soldier', 'scout', 'heavy'];
-    const type = types[index % types.length];
-    spawnEnemy(type, point.x, point.z);
-  });
+    const type = types[Math.floor(Math.random() * types.length)];
+    const pos = getRandomSpawnNearPlayers();
+    spawnEnemy(type, pos.x, pos.z);
+  }
+}
+
+function despawnFarEnemies() {
+  const playerList = Object.values(players);
+  if (playerList.length === 0) return;
+
+  for (const id in enemies) {
+    const enemy = enemies[id];
+
+    // Check distance to all players
+    let closestDist = Infinity;
+    for (const player of playerList) {
+      const dist = getDistance(enemy, player);
+      if (dist < closestDist) closestDist = dist;
+    }
+
+    // Despawn if too far from all players
+    if (closestDist > DESPAWN_DISTANCE) {
+      delete enemies[id];
+    }
+  }
+}
+
+function initializeEnemies() {
+  // Initial spawn around origin
+  for (let i = 0; i < 10; i++) {
+    const angle = (i / 10) * Math.PI * 2;
+    const distance = 30 + Math.random() * 30;
+    const x = Math.cos(angle) * distance;
+    const z = Math.sin(angle) * distance;
+
+    const types = ['soldier', 'soldier', 'scout', 'heavy'];
+    const type = types[i % types.length];
+    spawnEnemy(type, x, z);
+  }
 
   console.log(`Spawned ${Object.keys(enemies).length} enemies`);
 }
@@ -220,9 +270,17 @@ function updateEnemyAI(delta) {
                 targetPlayer.y = 2;
                 targetPlayer.z = Math.random() * 20 - 10;
 
+                // Get enemy type for display name
+                const enemyType = enemy.type.charAt(0).toUpperCase() + enemy.type.slice(1);
+
                 io.emit('playerDeath', {
                   playerId: enemy.targetPlayer,
-                  killerId: id
+                  playerName: targetPlayer.name,
+                  playerTeam: targetPlayer.team,
+                  killerId: id,
+                  killerName: enemyType,
+                  killerTeam: 'none',
+                  isEnemyKill: true
                 });
               }
             }
@@ -231,9 +289,7 @@ function updateEnemyAI(delta) {
         break;
     }
 
-    // Keep enemy in bounds
-    enemy.x = Math.max(-200, Math.min(200, enemy.x));
-    enemy.z = Math.max(-200, Math.min(200, enemy.z));
+    // No bounds - infinite map
   }
 }
 
@@ -242,9 +298,14 @@ function respawnEnemy(id) {
   if (!enemy) return;
 
   const type = ENEMY_TYPES[enemy.type];
+
+  // Respawn near a random player
+  const pos = getRandomSpawnNearPlayers();
   enemy.health = type.health;
-  enemy.x = enemy.spawnPoint.x + (Math.random() - 0.5) * 10;
-  enemy.z = enemy.spawnPoint.z + (Math.random() - 0.5) * 10;
+  enemy.x = pos.x;
+  enemy.z = pos.z;
+  enemy.spawnPoint = { x: pos.x, z: pos.z };
+  enemy.patrolTarget = { x: pos.x + (Math.random() - 0.5) * 30, z: pos.z + (Math.random() - 0.5) * 30 };
   enemy.state = 'patrol';
   enemy.targetPlayer = null;
 }
@@ -253,12 +314,22 @@ function respawnEnemy(id) {
 const TICK_RATE = 60;
 let lastUpdate = Date.now();
 
+let lastSpawnCheck = 0;
+const SPAWN_CHECK_INTERVAL = 2000; // Check every 2 seconds
+
 setInterval(() => {
   const now = Date.now();
   const delta = (now - lastUpdate) / 1000;
   lastUpdate = now;
 
   updateEnemyAI(delta);
+
+  // Periodically spawn/despawn enemies based on player positions
+  if (now - lastSpawnCheck > SPAWN_CHECK_INTERVAL) {
+    lastSpawnCheck = now;
+    despawnFarEnemies();
+    spawnEnemiesNearPlayers();
+  }
 
   // Broadcast enemy state to all players
   io.emit('enemies', enemies);
@@ -278,12 +349,25 @@ io.on('connection', (socket) => {
     y: 2,
     z: Math.random() * 20 - 10,
     health: 100,
-    difficulty: 'normal'
+    difficulty: 'normal',
+    name: 'Player',
+    team: 'none'
   };
 
   // Send current state to new player
   io.emit('players', players);
   socket.emit('enemies', enemies);
+
+  // Handle player info (name, team, difficulty)
+  socket.on('setPlayerInfo', (data) => {
+    if (players[socket.id]) {
+      players[socket.id].name = (data.name || 'Player').substring(0, 16);
+      players[socket.id].team = ['none', 'red', 'blue'].includes(data.team) ? data.team : 'none';
+      players[socket.id].difficulty = ['easy', 'normal', 'hard'].includes(data.difficulty) ? data.difficulty : 'normal';
+      console.log(`Player ${socket.id} joined as "${players[socket.id].name}" on team ${players[socket.id].team}`);
+      io.emit('players', players);
+    }
+  });
 
   // Handle player movement
   socket.on('move', (data) => {
@@ -296,11 +380,43 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle difficulty setting
+  // Handle chat messages
+  socket.on('chat', (data) => {
+    const player = players[socket.id];
+    if (!player) return;
+
+    const message = (data.message || '').substring(0, 100);
+    if (!message) return;
+
+    if (data.teamOnly && player.team !== 'none') {
+      // Team chat - only send to same team
+      for (const id in players) {
+        if (players[id].team === player.team) {
+          io.to(id).emit('chat', {
+            playerId: socket.id,
+            name: player.name,
+            team: player.team,
+            message,
+            teamOnly: true
+          });
+        }
+      }
+    } else {
+      // All chat
+      io.emit('chat', {
+        playerId: socket.id,
+        name: player.name,
+        team: player.team,
+        message,
+        teamOnly: false
+      });
+    }
+  });
+
+  // Handle difficulty setting (legacy support)
   socket.on('setDifficulty', (data) => {
     if (players[socket.id] && ['easy', 'normal', 'hard'].includes(data.difficulty)) {
       players[socket.id].difficulty = data.difficulty;
-      console.log(`Player ${socket.id} set difficulty to ${data.difficulty}`);
     }
   });
 
@@ -328,6 +444,7 @@ io.on('connection', (socket) => {
       });
 
       if (targetPlayer.health <= 0) {
+        const killer = players[socket.id];
         console.log(`Player ${data.targetId} was killed by ${socket.id}`);
         targetPlayer.health = 100;
         targetPlayer.x = Math.random() * 20 - 10;
@@ -336,7 +453,12 @@ io.on('connection', (socket) => {
 
         io.emit('playerDeath', {
           playerId: data.targetId,
-          killerId: socket.id
+          playerName: targetPlayer.name,
+          playerTeam: targetPlayer.team,
+          killerId: socket.id,
+          killerName: killer ? killer.name : 'Player',
+          killerTeam: killer ? killer.team : 'none',
+          isEnemyKill: false
         });
       }
     }
@@ -369,6 +491,34 @@ io.on('connection', (socket) => {
         }, 5000);
       }
     }
+  });
+
+  // Handle vehicle enter
+  socket.on('enterVehicle', (data) => {
+    socket.broadcast.emit('playerEnteredVehicle', {
+      playerId: socket.id,
+      vehicleId: data.vehicleId
+    });
+  });
+
+  // Handle vehicle exit
+  socket.on('exitVehicle', (data) => {
+    socket.broadcast.emit('playerExitedVehicle', {
+      playerId: socket.id,
+      vehicleId: data.vehicleId
+    });
+  });
+
+  // Handle vehicle position updates
+  socket.on('vehicleUpdate', (data) => {
+    socket.broadcast.emit('vehicleMoved', {
+      playerId: socket.id,
+      vehicleId: data.vehicleId,
+      x: data.x,
+      z: data.z,
+      rotation: data.rotation,
+      speed: data.speed
+    });
   });
 
   // Handle player disconnect
