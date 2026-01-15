@@ -477,6 +477,16 @@ const WEAPONS = {
     spread: 0.1,
     pellets: 8,
     automatic: false
+  },
+  sniper: {
+    name: 'Sniper',
+    damage: 100,
+    fireRate: 1500,
+    reloadTime: 3000,
+    magSize: 5,
+    maxAmmo: 20,
+    spread: 0.005,
+    automatic: false
   }
 };
 
@@ -523,8 +533,23 @@ const state = {
   currentVehicle: null,
   vehicleSpeed: 0,
   vehicleRotation: 0,
+  // Aircraft state
+  vehiclePitch: 0,
+  vehicleRoll: 0,
+  vehicleAltitude: 0,
   // Flashlight
-  flashlightOn: false
+  flashlightOn: false,
+  // Weapons inventory
+  weapons: {
+    pistol: true,   // Player starts with pistol
+    rifle: false,
+    shotgun: false,
+    sniper: false
+  },
+  // Parachute state
+  isParachuting: false,
+  parachuteVelocity: new THREE.Vector3(0, 0, 0),
+  parachuteMesh: null
 };
 
 // ==================== VEHICLE SYSTEM ====================
@@ -540,7 +565,8 @@ const VEHICLE_TYPES = {
     turnSpeed: 2.5,
     friction: 10,
     cameraHeight: 4,
-    cameraDistance: 8
+    cameraDistance: 8,
+    isAircraft: false
   },
   motorcycle: {
     maxSpeed: 90,
@@ -549,7 +575,23 @@ const VEHICLE_TYPES = {
     turnSpeed: 3.5,
     friction: 15,
     cameraHeight: 3,
-    cameraDistance: 6
+    cameraDistance: 6,
+    isAircraft: false
+  },
+  aircraft: {
+    maxSpeed: 150,
+    acceleration: 40,
+    brake: 20,
+    turnSpeed: 1.5,
+    friction: 5,
+    cameraHeight: 8,
+    cameraDistance: 20,
+    isAircraft: true,
+    minSpeed: 40,        // Stall speed
+    pitchSpeed: 1.2,     // How fast it pitches up/down
+    rollSpeed: 2.0,      // How fast it rolls
+    maxPitch: Math.PI / 4,  // Max pitch angle (45 degrees)
+    liftFactor: 0.02     // How much speed converts to lift
   }
 };
 
@@ -727,10 +769,136 @@ function createMotorcycleMesh() {
   return group;
 }
 
+function createAircraftMesh() {
+  const group = new THREE.Group();
+
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x3a5f8a }); // Blue-gray
+  const accentMat = new THREE.MeshStandardMaterial({ color: 0xcc0000 }); // Red accents
+  const glassMat = new THREE.MeshStandardMaterial({ color: 0x87ceeb, transparent: true, opacity: 0.6 });
+
+  // Fuselage (main body)
+  const fuselageGeo = new THREE.CylinderGeometry(0.8, 0.5, 6, 8);
+  const fuselage = new THREE.Mesh(fuselageGeo, bodyMat);
+  fuselage.rotation.x = Math.PI / 2;
+  fuselage.position.set(0, 0, 0);
+  fuselage.castShadow = true;
+  group.add(fuselage);
+
+  // Nose cone
+  const noseGeo = new THREE.ConeGeometry(0.5, 1.5, 8);
+  const nose = new THREE.Mesh(noseGeo, bodyMat);
+  nose.rotation.x = -Math.PI / 2;
+  nose.position.set(0, 0, 3.7);
+  nose.castShadow = true;
+  group.add(nose);
+
+  // Cockpit canopy
+  const canopyGeo = new THREE.SphereGeometry(0.6, 8, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+  const canopy = new THREE.Mesh(canopyGeo, glassMat);
+  canopy.position.set(0, 0.5, 1);
+  canopy.scale.set(1, 0.6, 1.5);
+  group.add(canopy);
+
+  // Main wings
+  const wingGeo = new THREE.BoxGeometry(10, 0.15, 1.5);
+  const wings = new THREE.Mesh(wingGeo, bodyMat);
+  wings.position.set(0, 0, -0.5);
+  wings.castShadow = true;
+  group.add(wings);
+
+  // Wing tips (red)
+  const wingTipGeo = new THREE.BoxGeometry(0.8, 0.15, 1.5);
+  const leftWingTip = new THREE.Mesh(wingTipGeo, accentMat);
+  leftWingTip.position.set(-5.4, 0, -0.5);
+  group.add(leftWingTip);
+  const rightWingTip = new THREE.Mesh(wingTipGeo, accentMat);
+  rightWingTip.position.set(5.4, 0, -0.5);
+  group.add(rightWingTip);
+
+  // Tail fin (vertical stabilizer)
+  const tailFinGeo = new THREE.BoxGeometry(0.15, 1.5, 1);
+  const tailFin = new THREE.Mesh(tailFinGeo, bodyMat);
+  tailFin.position.set(0, 0.75, -2.8);
+  tailFin.castShadow = true;
+  group.add(tailFin);
+
+  // Horizontal stabilizers
+  const hStabGeo = new THREE.BoxGeometry(3, 0.1, 0.8);
+  const hStab = new THREE.Mesh(hStabGeo, bodyMat);
+  hStab.position.set(0, 0, -2.8);
+  hStab.castShadow = true;
+  group.add(hStab);
+
+  // Propeller hub
+  const hubGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.3, 8);
+  const hub = new THREE.Mesh(hubGeo, new THREE.MeshStandardMaterial({ color: 0x333333 }));
+  hub.rotation.x = Math.PI / 2;
+  hub.position.set(0, 0, 4.3);
+  hub.name = 'propellerHub';
+  group.add(hub);
+
+  // Propeller blades
+  const bladeGeo = new THREE.BoxGeometry(0.2, 2, 0.05);
+  const bladeMat = new THREE.MeshStandardMaterial({ color: 0x4a3728 });
+  const blade1 = new THREE.Mesh(bladeGeo, bladeMat);
+  blade1.position.set(0, 0, 4.4);
+  blade1.name = 'propeller';
+  group.add(blade1);
+  const blade2 = new THREE.Mesh(bladeGeo, bladeMat);
+  blade2.rotation.z = Math.PI / 2;
+  blade2.position.set(0, 0, 4.4);
+  blade2.name = 'propeller2';
+  group.add(blade2);
+
+  // Landing gear
+  const gearMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+  const wheelGeo = new THREE.CylinderGeometry(0.25, 0.25, 0.15, 8);
+
+  // Front gear
+  const frontGearStrut = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.8, 0.1), gearMat);
+  frontGearStrut.position.set(0, -0.6, 2);
+  group.add(frontGearStrut);
+  const frontWheel = new THREE.Mesh(wheelGeo, gearMat);
+  frontWheel.rotation.z = Math.PI / 2;
+  frontWheel.position.set(0, -1, 2);
+  group.add(frontWheel);
+
+  // Rear gear (two wheels)
+  const rearGearStrut1 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.6, 0.1), gearMat);
+  rearGearStrut1.position.set(-1, -0.5, -1);
+  group.add(rearGearStrut1);
+  const rearWheel1 = new THREE.Mesh(wheelGeo, gearMat);
+  rearWheel1.rotation.z = Math.PI / 2;
+  rearWheel1.position.set(-1, -0.8, -1);
+  group.add(rearWheel1);
+
+  const rearGearStrut2 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.6, 0.1), gearMat);
+  rearGearStrut2.position.set(1, -0.5, -1);
+  group.add(rearGearStrut2);
+  const rearWheel2 = new THREE.Mesh(wheelGeo, gearMat);
+  rearWheel2.rotation.z = Math.PI / 2;
+  rearWheel2.position.set(1, -0.8, -1);
+  group.add(rearWheel2);
+
+  group.userData.type = 'aircraft';
+  group.userData.isVehicle = true;
+  group.userData.isAircraft = true;
+
+  return group;
+}
+
 function spawnVehicle(x, z, rotation = 0, type = 'jeep') {
   const id = `vehicle_${vehicleIdCounter++}`;
-  const mesh = type === 'motorcycle' ? createMotorcycleMesh() : createJeepMesh();
-  mesh.position.set(x, 0, z);
+  let mesh;
+  if (type === 'aircraft') {
+    mesh = createAircraftMesh();
+  } else if (type === 'motorcycle') {
+    mesh = createMotorcycleMesh();
+  } else {
+    mesh = createJeepMesh();
+  }
+  const startY = type === 'aircraft' ? 1.5 : 0; // Aircraft start slightly above ground
+  mesh.position.set(x, startY, z);
   mesh.rotation.y = rotation;
   mesh.userData.vehicleId = id;
 
@@ -742,10 +910,14 @@ function spawnVehicle(x, z, rotation = 0, type = 'jeep') {
     mesh,
     x,
     z,
+    y: startY,
     rotation,
     speed: 0,
     occupied: false,
-    driver: null
+    driver: null,
+    // Aircraft-specific properties
+    pitch: 0,
+    roll: 0
   };
 
   return id;
@@ -778,6 +950,14 @@ function enterVehicle(vehicle) {
   state.vehicleSpeed = 0;
   vehicle.occupied = true;
   vehicle.driver = socket.id;
+
+  // Initialize aircraft state if entering aircraft
+  const config = VEHICLE_TYPES[vehicle.type];
+  if (config && config.isAircraft) {
+    state.vehiclePitch = 0;
+    state.vehicleRoll = 0;
+    state.vehicleAltitude = vehicle.mesh.position.y || 2;
+  }
 
   // Play enter sound
   playSound('vehicleEnter');
@@ -825,12 +1005,199 @@ function exitVehicle() {
   showVehicleHUD(false);
 }
 
+function updateAircraft(delta, vehicle, config) {
+  // Throttle control - W accelerates, S decelerates
+  if (state.moveForward) {
+    state.vehicleSpeed += config.acceleration * delta;
+  } else if (state.moveBackward) {
+    state.vehicleSpeed -= config.brake * delta;
+  } else {
+    // Gradual slowdown from air resistance
+    state.vehicleSpeed -= config.friction * delta * 0.3;
+  }
+
+  // Clamp speed
+  state.vehicleSpeed = Math.max(0, Math.min(config.maxSpeed, state.vehicleSpeed));
+
+  // Pitch control - W/S when moving pitches up/down
+  if (state.vehicleSpeed > config.minSpeed) {
+    if (state.moveForward) {
+      // Pitch up when accelerating (climb)
+      state.vehiclePitch = Math.max(-config.maxPitch, state.vehiclePitch - config.pitchSpeed * delta);
+    } else if (state.moveBackward) {
+      // Pitch down when decelerating (dive)
+      state.vehiclePitch = Math.min(config.maxPitch, state.vehiclePitch + config.pitchSpeed * delta);
+    } else {
+      // Level out gradually
+      state.vehiclePitch *= 0.95;
+    }
+  } else {
+    // Nose down when stalling
+    state.vehiclePitch = Math.min(config.maxPitch * 0.8, state.vehiclePitch + config.pitchSpeed * delta * 0.5);
+  }
+
+  // Roll and yaw control - A/D
+  if (state.vehicleSpeed > config.minSpeed * 0.5) {
+    if (state.moveLeft) {
+      state.vehicleRoll = Math.max(-Math.PI / 3, state.vehicleRoll - config.rollSpeed * delta);
+      vehicle.mesh.rotation.y += config.turnSpeed * delta;
+    } else if (state.moveRight) {
+      state.vehicleRoll = Math.min(Math.PI / 3, state.vehicleRoll + config.rollSpeed * delta);
+      vehicle.mesh.rotation.y -= config.turnSpeed * delta;
+    } else {
+      // Level out roll
+      state.vehicleRoll *= 0.9;
+    }
+  } else {
+    // Reduce roll control at low speed
+    state.vehicleRoll *= 0.95;
+  }
+
+  // Calculate lift based on speed
+  const liftForce = state.vehicleSpeed * config.liftFactor;
+
+  // Calculate altitude change based on pitch and lift
+  const altitudeChange = -Math.sin(state.vehiclePitch) * state.vehicleSpeed * delta;
+
+  // Apply gravity when below stall speed
+  const gravity = state.vehicleSpeed < config.minSpeed ? -15 * delta : 0;
+
+  // Update altitude
+  state.vehicleAltitude += altitudeChange + liftForce * delta + gravity;
+
+  // Ground collision
+  const groundLevel = 2; // Minimum flight altitude
+  if (state.vehicleAltitude < groundLevel) {
+    state.vehicleAltitude = groundLevel;
+    // If hitting ground at high speed, crash
+    if (state.vehicleSpeed > 20 && state.vehiclePitch > 0.2) {
+      // Crash landing - exit vehicle and take damage
+      exitVehicle();
+      state.health = Math.max(1, state.health - 30);
+      updateHealthBar();
+      return;
+    }
+    // Level out on ground
+    state.vehiclePitch = Math.min(0, state.vehiclePitch);
+  }
+
+  // Update vehicle position
+  const direction = new THREE.Vector3(0, 0, 1);
+  direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), vehicle.mesh.rotation.y);
+
+  vehicle.mesh.position.x += direction.x * state.vehicleSpeed * delta;
+  vehicle.mesh.position.z += direction.z * state.vehicleSpeed * delta;
+  vehicle.mesh.position.y = state.vehicleAltitude;
+
+  // Check for collisions with objects
+  const aircraftPos = vehicle.mesh.position;
+  const aircraftRadius = 4; // Collision radius for aircraft
+
+  for (const obj of collidableObjects) {
+    if (!obj.userData || obj === vehicle.mesh) continue;
+
+    // Get object bounding box
+    const box = new THREE.Box3().setFromObject(obj);
+    const objCenter = new THREE.Vector3();
+    box.getCenter(objCenter);
+    const objSize = new THREE.Vector3();
+    box.getSize(objSize);
+
+    // Check if aircraft is within object bounds (with some padding)
+    const dx = Math.abs(aircraftPos.x - objCenter.x);
+    const dy = Math.abs(aircraftPos.y - objCenter.y);
+    const dz = Math.abs(aircraftPos.z - objCenter.z);
+
+    const hitX = dx < (objSize.x / 2 + aircraftRadius);
+    const hitY = dy < (objSize.y / 2 + 2); // Aircraft height
+    const hitZ = dz < (objSize.z / 2 + aircraftRadius);
+
+    if (hitX && hitY && hitZ) {
+      // Crash! Damage based on speed
+      const crashDamage = Math.min(100, Math.floor(state.vehicleSpeed * 0.8));
+      exitVehicle();
+      state.health = Math.max(0, state.health - crashDamage);
+      updateHealthBar();
+
+      // Check if player died from crash
+      if (state.health <= 0) {
+        socket.emit('playerDeath', { killedBy: 'crash' });
+      }
+
+      playSound('explosion');
+      return;
+    }
+  }
+
+  // Apply pitch and roll to mesh
+  vehicle.mesh.rotation.x = state.vehiclePitch;
+  vehicle.mesh.rotation.z = state.vehicleRoll;
+
+  // Animate propeller
+  if (vehicle.mesh.userData.propeller) {
+    vehicle.mesh.userData.propeller.rotation.z += state.vehicleSpeed * 0.5 * delta;
+  }
+
+  // Third-person camera follow
+  const cameraDistance = config.cameraDistance;
+  const cameraHeight = config.cameraHeight;
+
+  // Camera behind and above the aircraft
+  const cameraOffset = new THREE.Vector3(0, cameraHeight, -cameraDistance);
+  cameraOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), vehicle.mesh.rotation.y);
+
+  camera.position.x = vehicle.mesh.position.x + cameraOffset.x;
+  camera.position.y = vehicle.mesh.position.y + cameraHeight;
+  camera.position.z = vehicle.mesh.position.z + cameraOffset.z;
+
+  // Look at the aircraft
+  camera.lookAt(vehicle.mesh.position);
+
+  // Update vehicle data for networking
+  vehicle.x = vehicle.mesh.position.x;
+  vehicle.y = vehicle.mesh.position.y;
+  vehicle.z = vehicle.mesh.position.z;
+  vehicle.rotation = vehicle.mesh.rotation.y;
+  vehicle.pitch = state.vehiclePitch;
+  vehicle.roll = state.vehicleRoll;
+  vehicle.speed = state.vehicleSpeed;
+
+  // Update speedometer with altitude display
+  updateSpeedometer(state.vehicleSpeed, state.vehicleAltitude);
+
+  // Engine sound
+  const now = Date.now();
+  if (now - lastEngineSoundTime > ENGINE_SOUND_INTERVAL && state.vehicleSpeed > 10) {
+    playSound('engine', { speed: state.vehicleSpeed });
+    lastEngineSoundTime = now;
+  }
+
+  // Emit vehicle update
+  socket.emit('vehicleUpdate', {
+    vehicleId: vehicle.id,
+    x: vehicle.x,
+    y: vehicle.y,
+    z: vehicle.z,
+    rotation: vehicle.rotation,
+    pitch: vehicle.pitch,
+    roll: vehicle.roll,
+    speed: vehicle.speed
+  });
+}
+
 function updateVehicle(delta) {
   if (!state.inVehicle || !state.currentVehicle) return;
 
   const vehicle = state.currentVehicle;
   const config = VEHICLE_TYPES[vehicle.type] || VEHICLE_TYPES.jeep;
 
+  // Handle aircraft separately
+  if (config.isAircraft) {
+    updateAircraft(delta, vehicle, config);
+    return;
+  }
+
+  // Ground vehicle logic
   // Acceleration/braking
   if (state.moveForward) {
     state.vehicleSpeed += config.acceleration * delta;
@@ -907,22 +1274,220 @@ function showVehicleHUD(show) {
     // Update vehicle name and style based on type
     if (show && state.currentVehicle) {
       const vehicleName = vehicleHud.querySelector('.vehicle-name');
-      const isMotorcycle = state.currentVehicle.type === 'motorcycle';
+      const vehicleType = state.currentVehicle.type;
+      const vehicleControls = vehicleHud.querySelector('.vehicle-controls');
       if (vehicleName) {
-        vehicleName.textContent = isMotorcycle ? 'Motorcycle' : 'Jeep';
+        if (vehicleType === 'aircraft') {
+          vehicleName.textContent = 'Aircraft';
+        } else if (vehicleType === 'motorcycle') {
+          vehicleName.textContent = 'Motorcycle';
+        } else {
+          vehicleName.textContent = 'Jeep';
+        }
       }
-      vehicleHud.classList.toggle('motorcycle', isMotorcycle);
+      if (vehicleControls) {
+        if (vehicleType === 'aircraft') {
+          vehicleControls.innerHTML = '<span>W/S</span> throttle | <span>A/D</span> turn | <span>Space</span> bail out | <span>E</span> land';
+        } else {
+          vehicleControls.innerHTML = '<span>WASD</span> to drive | <span>E</span> to exit';
+        }
+      }
+      vehicleHud.classList.toggle('motorcycle', vehicleType === 'motorcycle');
+      vehicleHud.classList.toggle('aircraft', vehicleType === 'aircraft');
     } else {
       vehicleHud.classList.remove('motorcycle');
+      vehicleHud.classList.remove('aircraft');
     }
   }
 }
 
-function updateSpeedometer(speed) {
+function updateSpeedometer(speed, altitude) {
   const speedText = document.getElementById('speed-value');
   if (speedText) {
     speedText.textContent = Math.round(speed);
   }
+  // Show altitude for aircraft
+  const altText = document.getElementById('altitude-value');
+  if (altText) {
+    if (altitude !== undefined) {
+      altText.textContent = Math.round(altitude);
+      altText.parentElement.style.display = 'block';
+    } else {
+      altText.parentElement.style.display = 'none';
+    }
+  }
+}
+
+// ==================== PARACHUTE SYSTEM ====================
+
+const PARACHUTE_FALL_SPEED = 5; // Slow descent
+const PARACHUTE_MOVE_SPEED = 15; // Horizontal movement
+const PARACHUTE_MIN_DEPLOY_HEIGHT = 10; // Minimum height to deploy
+
+function createParachuteMesh() {
+  const group = new THREE.Group();
+
+  // Canopy (half sphere / dome shape)
+  const canopyGeo = new THREE.SphereGeometry(3, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+  const canopyMat = new THREE.MeshStandardMaterial({
+    color: 0xe74c3c,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.9
+  });
+  const canopy = new THREE.Mesh(canopyGeo, canopyMat);
+  canopy.rotation.x = Math.PI; // Flip so dome faces up
+  canopy.position.y = 4;
+  group.add(canopy);
+
+  // Stripes on canopy
+  const stripeGeo = new THREE.SphereGeometry(3.02, 16, 8, 0, Math.PI / 4, 0, Math.PI / 2);
+  const stripeMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.9
+  });
+  for (let i = 0; i < 4; i++) {
+    const stripe = new THREE.Mesh(stripeGeo, stripeMat);
+    stripe.rotation.x = Math.PI;
+    stripe.rotation.y = i * Math.PI / 2;
+    stripe.position.y = 4;
+    group.add(stripe);
+  }
+
+  // Suspension lines
+  const lineMat = new THREE.LineBasicMaterial({ color: 0x333333 });
+  const linePositions = [
+    [-2, 0], [2, 0], [0, -2], [0, 2],
+    [-1.5, -1.5], [1.5, -1.5], [-1.5, 1.5], [1.5, 1.5]
+  ];
+  linePositions.forEach(([x, z]) => {
+    const points = [
+      new THREE.Vector3(x * 0.3, 0, z * 0.3),
+      new THREE.Vector3(x, 4, z)
+    ];
+    const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
+    const line = new THREE.Line(lineGeo, lineMat);
+    group.add(line);
+  });
+
+  return group;
+}
+
+function deployParachute() {
+  if (state.isParachuting || state.parachuteMesh) return;
+
+  state.isParachuting = true;
+
+  // Create and attach parachute mesh
+  state.parachuteMesh = createParachuteMesh();
+  scene.add(state.parachuteMesh);
+
+  // Initialize velocity (inherit some horizontal momentum)
+  state.parachuteVelocity.set(0, -PARACHUTE_FALL_SPEED, 0);
+
+  // Show weapon again
+  weaponGroup.visible = true;
+
+  playSound('pickup'); // Parachute deploy sound
+}
+
+function updateParachute(delta) {
+  if (!state.isParachuting || !state.parachuteMesh) return;
+
+  // Horizontal movement with WASD
+  const moveDir = new THREE.Vector3();
+
+  if (state.moveForward) moveDir.z -= 1;
+  if (state.moveBackward) moveDir.z += 1;
+  if (state.moveLeft) moveDir.x -= 1;
+  if (state.moveRight) moveDir.x += 1;
+
+  if (moveDir.length() > 0) {
+    moveDir.normalize();
+    // Apply camera rotation to movement
+    moveDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), camera.rotation.y);
+    moveDir.multiplyScalar(PARACHUTE_MOVE_SPEED);
+  }
+
+  // Update velocities
+  state.parachuteVelocity.x = moveDir.x;
+  state.parachuteVelocity.z = moveDir.z;
+  state.parachuteVelocity.y = -PARACHUTE_FALL_SPEED;
+
+  // Move camera/player
+  camera.position.x += state.parachuteVelocity.x * delta;
+  camera.position.y += state.parachuteVelocity.y * delta;
+  camera.position.z += state.parachuteVelocity.z * delta;
+
+  // Update parachute position (above player)
+  state.parachuteMesh.position.copy(camera.position);
+  state.parachuteMesh.position.y -= 1; // Slightly below camera
+
+  // Slight swaying animation
+  state.parachuteMesh.rotation.z = Math.sin(Date.now() * 0.002) * 0.1;
+  state.parachuteMesh.rotation.x = Math.sin(Date.now() * 0.0015) * 0.05;
+
+  // Check for landing
+  if (camera.position.y <= PLAYER_HEIGHT) {
+    landParachute();
+  }
+
+  // Update chunks based on position
+  updateChunks(camera.position.x, camera.position.z);
+
+  // Emit position
+  socket.emit('move', {
+    x: camera.position.x,
+    y: camera.position.y,
+    z: camera.position.z,
+    parachuting: true
+  });
+}
+
+function landParachute() {
+  if (!state.isParachuting) return;
+
+  state.isParachuting = false;
+  camera.position.y = PLAYER_HEIGHT;
+
+  // Remove parachute mesh
+  if (state.parachuteMesh) {
+    scene.remove(state.parachuteMesh);
+    state.parachuteMesh = null;
+  }
+
+  // Reset velocity
+  state.parachuteVelocity.set(0, 0, 0);
+  state.velocity.set(0, 0, 0);
+
+  playSound('footstep'); // Landing sound
+}
+
+function bailOutOfAircraft() {
+  if (!state.inVehicle || !state.currentVehicle) return;
+
+  const vehicle = state.currentVehicle;
+  const config = VEHICLE_TYPES[vehicle.type];
+
+  // Only bail from aircraft at sufficient height
+  if (!config || !config.isAircraft) return;
+  if (state.vehicleAltitude < PARACHUTE_MIN_DEPLOY_HEIGHT) return;
+
+  // Store position before exiting
+  const exitX = vehicle.mesh.position.x;
+  const exitY = state.vehicleAltitude;
+  const exitZ = vehicle.mesh.position.z;
+
+  // Exit the vehicle
+  exitVehicle();
+
+  // Set camera to aircraft's position
+  camera.position.set(exitX, exitY, exitZ);
+
+  // Deploy parachute
+  deployParachute();
 }
 
 // ==================== PICKUP SYSTEM ====================
@@ -945,6 +1510,17 @@ const PICKUP_TYPES = {
     label: '+30 Ammo'
   }
 };
+
+// Weapon pickups
+const WEAPON_PICKUPS = {
+  pistol: { name: 'Pistol', color: 0x888888, glowColor: 0xaaaaaa },
+  rifle: { name: 'Rifle', color: 0x2c3e50, glowColor: 0x34495e },
+  shotgun: { name: 'Shotgun', color: 0x8b4513, glowColor: 0xa0522d },
+  sniper: { name: 'Sniper', color: 0x1a1a2e, glowColor: 0x16213e }
+};
+
+const weaponPickups = {};
+let weaponPickupIdCounter = 0;
 
 function createHealthPackMesh() {
   const group = new THREE.Group();
@@ -1076,6 +1652,23 @@ function spawnChunkPickups(cx, cz, seed) {
     const type = seededRandom(pSeed + 2) < 0.6 ? 'health' : 'ammo';
     spawnPickup(type, px, pz);
   }
+
+  // Spawn weapon pickup (10% chance per chunk)
+  if (seededRandom(seed + 5500) < 0.1) {
+    const wSeed = seed + 5600;
+    const wx = worldX + 5 + seededRandom(wSeed) * (CHUNK_SIZE - 10);
+    const wz = worldZ + 5 + seededRandom(wSeed + 1) * (CHUNK_SIZE - 10);
+
+    // Weighted random weapon type (rarer weapons less common)
+    const roll = seededRandom(wSeed + 2);
+    let weaponType;
+    if (roll < 0.35) weaponType = 'pistol';
+    else if (roll < 0.65) weaponType = 'rifle';
+    else if (roll < 0.90) weaponType = 'shotgun';
+    else weaponType = 'sniper';
+
+    spawnWeaponPickup(weaponType, wx, wz);
+  }
 }
 
 function collectPickup(pickup) {
@@ -1152,6 +1745,166 @@ function showPickupMessage(text, color) {
     msg.style.transform = 'translateX(-50%) translateY(-30px)';
     setTimeout(() => msg.remove(), 500);
   }, 1500);
+}
+
+// ==================== WEAPON PICKUP FUNCTIONS ====================
+
+function createWeaponPickupMesh(weaponType) {
+  const group = new THREE.Group();
+  const config = WEAPON_PICKUPS[weaponType];
+
+  if (weaponType === 'pistol') {
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(0.15, 0.25, 0.4),
+      new THREE.MeshStandardMaterial({ color: config.color, metalness: 0.6 })
+    );
+    body.position.y = 0.5;
+    group.add(body);
+    const grip = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.2, 0.15),
+      new THREE.MeshStandardMaterial({ color: 0x2c2c2c })
+    );
+    grip.position.set(0, 0.35, 0.05);
+    group.add(grip);
+  } else if (weaponType === 'rifle') {
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(0.1, 0.12, 1.0),
+      new THREE.MeshStandardMaterial({ color: config.color, metalness: 0.5 })
+    );
+    body.position.y = 0.5;
+    group.add(body);
+    const stock = new THREE.Mesh(
+      new THREE.BoxGeometry(0.08, 0.15, 0.3),
+      new THREE.MeshStandardMaterial({ color: 0x4a3728 })
+    );
+    stock.position.set(0, 0.48, 0.5);
+    group.add(stock);
+  } else if (weaponType === 'shotgun') {
+    const body = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.04, 0.9, 8),
+      new THREE.MeshStandardMaterial({ color: config.color, metalness: 0.4 })
+    );
+    body.rotation.x = Math.PI / 2;
+    body.position.y = 0.5;
+    group.add(body);
+    const stock = new THREE.Mesh(
+      new THREE.BoxGeometry(0.1, 0.12, 0.25),
+      new THREE.MeshStandardMaterial({ color: 0x4a3728 })
+    );
+    stock.position.set(0, 0.5, 0.45);
+    group.add(stock);
+  } else if (weaponType === 'sniper') {
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(0.08, 0.1, 1.3),
+      new THREE.MeshStandardMaterial({ color: config.color, metalness: 0.7 })
+    );
+    body.position.y = 0.5;
+    group.add(body);
+    const scope = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.03, 0.03, 0.2, 8),
+      new THREE.MeshStandardMaterial({ color: 0x1a1a1a })
+    );
+    scope.position.set(0, 0.6, -0.2);
+    group.add(scope);
+  }
+
+  // Glow effect
+  const glow = new THREE.Mesh(
+    new THREE.SphereGeometry(0.6, 16, 16),
+    new THREE.MeshBasicMaterial({ color: config.glowColor, transparent: true, opacity: 0.2 })
+  );
+  glow.position.y = 0.5;
+  glow.name = 'glow';
+  group.add(glow);
+
+  group.userData.type = weaponType;
+  group.userData.isWeaponPickup = true;
+
+  return group;
+}
+
+function spawnWeaponPickup(type, x, z) {
+  const id = `weapon_${weaponPickupIdCounter++}`;
+  const mesh = createWeaponPickupMesh(type);
+  mesh.position.set(x, 0, z);
+  mesh.userData.pickupId = id;
+
+  scene.add(mesh);
+
+  weaponPickups[id] = {
+    id,
+    type,
+    mesh,
+    x,
+    z,
+    collected: false,
+    respawnTime: 0
+  };
+
+  return id;
+}
+
+function pickupWeapon(weaponType) {
+  if (state.weapons[weaponType]) {
+    // Already have this weapon - give ammo instead
+    const ammoAmount = Math.floor(WEAPONS[weaponType].maxAmmo / 2);
+    state.ammoReserve += ammoAmount;
+    updateAmmoDisplay();
+    showPickupMessage(`+${ammoAmount} ${WEAPONS[weaponType].name} Ammo`, '#f39c12');
+  } else {
+    // Unlock new weapon
+    state.weapons[weaponType] = true;
+    showPickupMessage(`Acquired ${WEAPONS[weaponType].name}!`, '#9b59b6');
+    updateWeaponSlots();
+  }
+  playSound('pickup');
+}
+
+function updateWeaponPickups() {
+  const now = Date.now();
+  const playerPos = camera.position;
+
+  for (const id in weaponPickups) {
+    const pickup = weaponPickups[id];
+
+    // Respawn check
+    if (pickup.collected && pickup.respawnTime > 0 && now >= pickup.respawnTime) {
+      pickup.collected = false;
+      pickup.mesh.visible = true;
+      pickup.respawnTime = 0;
+    }
+
+    if (pickup.collected) continue;
+
+    // Animate (bob and rotate)
+    pickup.mesh.position.y = 0.3 + Math.sin(now * 0.003 + pickup.x) * 0.15;
+    pickup.mesh.rotation.y += 0.015;
+
+    // Glow pulse
+    const glow = pickup.mesh.getObjectByName('glow');
+    if (glow) {
+      glow.material.opacity = 0.15 + Math.sin(now * 0.004) * 0.1;
+    }
+
+    // Collection check
+    const dx = pickup.x - playerPos.x;
+    const dz = pickup.z - playerPos.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+
+    if (dist < PICKUP_COLLECT_DISTANCE && state.isPlaying && !state.isDead) {
+      collectWeaponPickup(pickup);
+    }
+  }
+}
+
+function collectWeaponPickup(pickup) {
+  if (pickup.collected) return;
+
+  pickup.collected = true;
+  pickup.mesh.visible = false;
+  pickup.respawnTime = Date.now() + 60000; // 60 second respawn
+
+  pickupWeapon(pickup.type);
 }
 
 // Team colors
@@ -1426,6 +2179,230 @@ const groundMaterial = new THREE.MeshStandardMaterial({
 // Building colors
 const BUILDING_COLORS = [0x808080, 0x606060, 0x707070, 0x505050, 0x909090, 0x555555, 0x656565, 0x757575];
 
+// Loot container system
+const lootContainers = {};
+let lootContainerIdCounter = 0;
+const LOOT_SEARCH_DISTANCE = 2.5;
+
+const LOOT_TYPES = [
+  { type: 'health', chance: 0.3, amount: 25 },
+  { type: 'ammo', chance: 0.4, amount: 20 },
+  { type: 'bigHealth', chance: 0.15, amount: 50 },
+  { type: 'bigAmmo', chance: 0.15, amount: 40 }
+];
+
+function createLootCrate(x, y, z, seed) {
+  const id = `loot_${lootContainerIdCounter++}`;
+  const group = new THREE.Group();
+
+  // Crate body
+  const crateGeo = new THREE.BoxGeometry(1, 0.8, 0.8);
+  const crateMat = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
+  const crate = new THREE.Mesh(crateGeo, crateMat);
+  crate.castShadow = true;
+  group.add(crate);
+
+  // Crate lid lines
+  const lineGeo = new THREE.BoxGeometry(1.02, 0.05, 0.1);
+  const lineMat = new THREE.MeshStandardMaterial({ color: 0x5c3317 });
+  const line1 = new THREE.Mesh(lineGeo, lineMat);
+  line1.position.y = 0.3;
+  group.add(line1);
+  const line2 = new THREE.Mesh(lineGeo, lineMat);
+  line2.position.y = -0.1;
+  group.add(line2);
+
+  group.position.set(x, y + 0.4, z);
+
+  // Determine loot
+  const roll = seededRandom(seed);
+  let cumulative = 0;
+  let lootType = LOOT_TYPES[0];
+  for (const lt of LOOT_TYPES) {
+    cumulative += lt.chance;
+    if (roll < cumulative) {
+      lootType = lt;
+      break;
+    }
+  }
+
+  lootContainers[id] = {
+    id,
+    mesh: group,
+    x, y, z,
+    searched: false,
+    lootType: lootType.type,
+    lootAmount: lootType.amount
+  };
+
+  return group;
+}
+
+function getNearestLootContainer(position) {
+  let nearest = null;
+  let nearestDist = LOOT_SEARCH_DISTANCE;
+
+  for (const id in lootContainers) {
+    const container = lootContainers[id];
+    if (container.searched) continue;
+
+    const dx = position.x - container.x;
+    const dz = position.z - container.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+
+    if (dist < nearestDist) {
+      nearestDist = dist;
+      nearest = container;
+    }
+  }
+
+  return nearest;
+}
+
+function searchLootContainer(container) {
+  if (!container || container.searched) return;
+
+  container.searched = true;
+
+  // Dim the crate to show it's been searched
+  container.mesh.children.forEach(child => {
+    if (child.material) {
+      child.material.color.setHex(0x3d2510);
+    }
+  });
+
+  // Give loot to player
+  if (container.lootType === 'health' || container.lootType === 'bigHealth') {
+    state.health = Math.min(100, state.health + container.lootAmount);
+    updateHealthBar();
+    showNotification(`+${container.lootAmount} Health`);
+  } else if (container.lootType === 'ammo' || container.lootType === 'bigAmmo') {
+    state.ammo += container.lootAmount;
+    updateAmmoDisplay();
+    showNotification(`+${container.lootAmount} Ammo`);
+  }
+
+  playSound('pickup');
+}
+
+function createBuildingWithInterior(x, z, width, height, depth, color, seed, chunk) {
+  const group = new THREE.Group();
+  const wallThickness = 0.3;
+
+  // Floor
+  const floorGeo = new THREE.BoxGeometry(width, 0.2, depth);
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0x4a4a4a });
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.position.y = 0.1;
+  floor.receiveShadow = true;
+  group.add(floor);
+
+  // Walls material
+  const wallMat = new THREE.MeshStandardMaterial({ color });
+
+  // Back wall (full)
+  const backWallGeo = new THREE.BoxGeometry(width, height, wallThickness);
+  const backWall = new THREE.Mesh(backWallGeo, wallMat);
+  backWall.position.set(0, height / 2, -depth / 2 + wallThickness / 2);
+  backWall.castShadow = true;
+  group.add(backWall);
+
+  // Front wall (with door opening)
+  const doorWidth = 2;
+  const doorHeight = 3;
+
+  // Front left section
+  const frontLeftWidth = (width - doorWidth) / 2;
+  const frontLeftGeo = new THREE.BoxGeometry(frontLeftWidth, height, wallThickness);
+  const frontLeft = new THREE.Mesh(frontLeftGeo, wallMat);
+  frontLeft.position.set(-width / 2 + frontLeftWidth / 2, height / 2, depth / 2 - wallThickness / 2);
+  frontLeft.castShadow = true;
+  group.add(frontLeft);
+
+  // Front right section
+  const frontRightGeo = new THREE.BoxGeometry(frontLeftWidth, height, wallThickness);
+  const frontRight = new THREE.Mesh(frontRightGeo, wallMat);
+  frontRight.position.set(width / 2 - frontLeftWidth / 2, height / 2, depth / 2 - wallThickness / 2);
+  frontRight.castShadow = true;
+  group.add(frontRight);
+
+  // Above door section
+  const aboveDoorGeo = new THREE.BoxGeometry(doorWidth, height - doorHeight, wallThickness);
+  const aboveDoor = new THREE.Mesh(aboveDoorGeo, wallMat);
+  aboveDoor.position.set(0, doorHeight + (height - doorHeight) / 2, depth / 2 - wallThickness / 2);
+  aboveDoor.castShadow = true;
+  group.add(aboveDoor);
+
+  // Left wall
+  const leftWallGeo = new THREE.BoxGeometry(wallThickness, height, depth);
+  const leftWall = new THREE.Mesh(leftWallGeo, wallMat);
+  leftWall.position.set(-width / 2 + wallThickness / 2, height / 2, 0);
+  leftWall.castShadow = true;
+  group.add(leftWall);
+
+  // Right wall
+  const rightWallGeo = new THREE.BoxGeometry(wallThickness, height, depth);
+  const rightWall = new THREE.Mesh(rightWallGeo, wallMat);
+  rightWall.position.set(width / 2 - wallThickness / 2, height / 2, 0);
+  rightWall.castShadow = true;
+  group.add(rightWall);
+
+  // Roof
+  const roofGeo = new THREE.BoxGeometry(width, wallThickness, depth);
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0x3a3a3a });
+  const roof = new THREE.Mesh(roofGeo, roofMat);
+  roof.position.y = height;
+  roof.castShadow = true;
+  roof.receiveShadow = true;
+  group.add(roof);
+
+  group.position.set(x, 0, z);
+
+  // Add interior furniture
+  const interiorWidth = width - 2;
+  const interiorDepth = depth - 2;
+
+  // Add 1-3 loot crates inside
+  const numCrates = 1 + Math.floor(seededRandom(seed + 100) * 3);
+  for (let i = 0; i < numCrates; i++) {
+    const cx = x + (seededRandom(seed + 200 + i) - 0.5) * interiorWidth * 0.7;
+    const cz = z + (seededRandom(seed + 300 + i) - 0.5) * interiorDepth * 0.7;
+    const crate = createLootCrate(cx, 0, cz, seed + 400 + i);
+    chunk.add(crate);
+  }
+
+  // Add a table (50% chance)
+  if (seededRandom(seed + 500) < 0.5) {
+    const tableGeo = new THREE.BoxGeometry(1.5, 0.1, 1);
+    const tableMat = new THREE.MeshStandardMaterial({ color: 0x4a3728 });
+    const table = new THREE.Mesh(tableGeo, tableMat);
+    const tx = (seededRandom(seed + 600) - 0.5) * interiorWidth * 0.5;
+    const tz = (seededRandom(seed + 601) - 0.5) * interiorDepth * 0.5;
+    table.position.set(tx, 0.8, tz);
+    group.add(table);
+
+    // Table legs
+    const legGeo = new THREE.BoxGeometry(0.1, 0.8, 0.1);
+    const positions = [[-0.6, -0.4], [0.6, -0.4], [-0.6, 0.4], [0.6, 0.4]];
+    positions.forEach(([lx, lz]) => {
+      const leg = new THREE.Mesh(legGeo, tableMat);
+      leg.position.set(tx + lx, 0.4, tz + lz);
+      group.add(leg);
+    });
+  }
+
+  // Add shelves on back wall (40% chance)
+  if (seededRandom(seed + 700) < 0.4) {
+    const shelfGeo = new THREE.BoxGeometry(2, 0.1, 0.4);
+    const shelfMat = new THREE.MeshStandardMaterial({ color: 0x5c4033 });
+    const shelf = new THREE.Mesh(shelfGeo, shelfMat);
+    shelf.position.set(0, 1.5, -interiorDepth / 2 + 0.3);
+    group.add(shelf);
+  }
+
+  return group;
+}
+
 function createChunk(cx, cz) {
   const chunkKey = `${cx},${cz}`;
   if (chunks[chunkKey]) return;
@@ -1463,21 +2440,17 @@ function createChunk(cx, cz) {
     const bx = worldX + 8 + seededRandom(bSeed) * (CHUNK_SIZE - 16);
     const bz = worldZ + 8 + seededRandom(bSeed + 1) * (CHUNK_SIZE - 16);
 
-    // Random size
-    const width = 6 + seededRandom(bSeed + 2) * 10;
-    const height = 8 + seededRandom(bSeed + 3) * 20;
-    const depth = 6 + seededRandom(bSeed + 4) * 10;
+    // Random size - keep buildings reasonable for interiors
+    const width = 8 + seededRandom(bSeed + 2) * 6; // 8-14 units wide
+    const height = 4 + seededRandom(bSeed + 3) * 4; // 4-8 units tall (single story)
+    const depth = 8 + seededRandom(bSeed + 4) * 6; // 8-14 units deep
 
     // Random color
     const colorIndex = Math.floor(seededRandom(bSeed + 5) * BUILDING_COLORS.length);
     const color = BUILDING_COLORS[colorIndex];
 
-    const geometry = new THREE.BoxGeometry(width, height, depth);
-    const material = new THREE.MeshStandardMaterial({ color });
-    const building = new THREE.Mesh(geometry, material);
-    building.position.set(bx, height / 2, bz);
-    building.castShadow = true;
-    building.receiveShadow = true;
+    // Create building with interior and loot
+    const building = createBuildingWithInterior(bx, bz, width, height, depth, color, bSeed, chunk);
     chunk.add(building);
     chunk.userData.objects.push(building);
     collidableObjects.push(building);
@@ -1601,6 +2574,75 @@ portalInner.position.copy(portal.position);
 portalInner.rotation.y = Math.PI / 4;
 scene.add(portalInner);
 
+// Portal constants for victory condition
+const PORTAL_POSITION = { x: 100, y: 6, z: 100 };
+const PORTAL_ENTER_DISTANCE = 8;
+let gameStartTime = Date.now();
+
+function updatePortal() {
+  if (!state.isPlaying || state.isDead) return;
+
+  const playerPos = camera.position;
+  const dx = PORTAL_POSITION.x - playerPos.x;
+  const dz = PORTAL_POSITION.z - playerPos.z;
+  const dist = Math.sqrt(dx * dx + dz * dz);
+
+  // Update distance indicator
+  const distIndicator = document.getElementById('portal-distance');
+  if (distIndicator) {
+    distIndicator.textContent = `${Math.round(dist)}m`;
+  }
+
+  // Check for portal entry
+  if (dist < PORTAL_ENTER_DISTANCE) {
+    enterPortal();
+  }
+}
+
+function enterPortal() {
+  // Victory condition
+  state.isPlaying = false;
+  playSound('pickup');
+  showVictoryScreen();
+}
+
+function getPlayTime() {
+  const elapsed = Date.now() - gameStartTime;
+  const minutes = Math.floor(elapsed / 60000);
+  const seconds = Math.floor((elapsed % 60000) / 1000);
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function showVictoryScreen() {
+  // Create victory overlay
+  const victory = document.createElement('div');
+  victory.id = 'victory-screen';
+  victory.innerHTML = `
+    <h1>VICTORY!</h1>
+    <p>You reached the portal!</p>
+    <p>Time: ${getPlayTime()}</p>
+    <p>Kills: ${state.kills}</p>
+    <p>Deaths: ${state.deaths}</p>
+    <button onclick="returnToMenuFromVictory()">Return to Menu</button>
+  `;
+  document.getElementById('hud').appendChild(victory);
+  document.exitPointerLock();
+}
+
+window.returnToMenuFromVictory = function() {
+  const victory = document.getElementById('victory-screen');
+  if (victory) victory.remove();
+
+  state.gameState = 'menu';
+  state.isPlaying = false;
+  state.kills = 0;
+  state.deaths = 0;
+
+  const mainMenu = document.getElementById('main-menu');
+  mainMenu.classList.remove('hidden');
+  document.getElementById('crosshair').classList.add('hidden');
+};
+
 // Initial vehicle spawns (around origin)
 function spawnInitialVehicles() {
   const vehicleSpawns = [
@@ -1609,7 +2651,8 @@ function spawnInitialVehicles() {
     { x: 40, z: 35, rotation: Math.PI, type: 'jeep' },
     { x: -45, z: -30, rotation: Math.PI / 2, type: 'motorcycle' },
     { x: 60, z: -50, rotation: 0, type: 'jeep' },
-    { x: 10, z: 30, rotation: Math.PI / 6, type: 'motorcycle' }
+    { x: 10, z: 30, rotation: Math.PI / 6, type: 'motorcycle' },
+    { x: 80, z: 10, rotation: 0, type: 'aircraft' }
   ];
 
   vehicleSpawns.forEach(spawn => {
@@ -1630,8 +2673,16 @@ function spawnChunkVehicles(cx, cz, seed) {
     const vx = worldX + 10 + seededRandom(seed + 9001) * (CHUNK_SIZE - 20);
     const vz = worldZ + 10 + seededRandom(seed + 9002) * (CHUNK_SIZE - 20);
     const vRotation = seededRandom(seed + 9003) * Math.PI * 2;
-    // 40% chance of motorcycle, 60% chance of jeep
-    const vehicleType = seededRandom(seed + 9004) < 0.4 ? 'motorcycle' : 'jeep';
+    // 10% aircraft, 35% motorcycle, 55% jeep
+    const typeRoll = seededRandom(seed + 9004);
+    let vehicleType;
+    if (typeRoll < 0.1) {
+      vehicleType = 'aircraft';
+    } else if (typeRoll < 0.45) {
+      vehicleType = 'motorcycle';
+    } else {
+      vehicleType = 'jeep';
+    }
     spawnVehicle(vx, vz, vRotation, vehicleType);
   }
 }
@@ -1982,6 +3033,11 @@ function reload() {
 }
 
 function switchWeapon(weaponType) {
+  // Check if player has this weapon
+  if (!state.weapons[weaponType]) {
+    showPickupMessage(`No ${WEAPONS[weaponType].name}`, '#e74c3c');
+    return;
+  }
   if (state.currentWeapon === weaponType || state.isReloading) return;
 
   state.currentWeapon = weaponType;
@@ -2002,6 +3058,22 @@ function updateAmmoDisplay() {
 
 function updateWeaponDisplay() {
   document.getElementById('weapon-name').textContent = WEAPONS[state.currentWeapon].name;
+}
+
+function updateWeaponSlots() {
+  const slots = document.querySelectorAll('.weapon-slot');
+  const weaponNames = ['pistol', 'rifle', 'shotgun'];
+
+  slots.forEach((slot, index) => {
+    const weaponType = weaponNames[index];
+    if (state.weapons[weaponType]) {
+      slot.style.opacity = '1';
+      slot.style.filter = 'none';
+    } else {
+      slot.style.opacity = '0.4';
+      slot.style.filter = 'grayscale(100%)';
+    }
+  });
 }
 
 // ==================== CONTROLS ====================
@@ -2044,6 +3116,14 @@ function startGame(difficulty) {
   state.isPlaying = true;
   state.isPaused = false;
   state.health = 100;
+
+  // Reset weapons inventory
+  state.weapons = { pistol: true, rifle: false, shotgun: false, sniper: false };
+  state.currentWeapon = 'pistol';
+  updateWeaponSlots();
+
+  // Reset game timer
+  gameStartTime = Date.now();
 
   // Reset position
   camera.position.set(0, PLAYER_HEIGHT, 0);
@@ -2370,11 +3450,18 @@ document.addEventListener('keydown', (event) => {
 
   if (!state.isPlaying || state.isPaused) return;
 
-  // Vehicle enter/exit with E key
+  // Vehicle enter/exit with E key, or search loot containers
   if (event.code === 'KeyE') {
     if (state.inVehicle) {
       exitVehicle();
     } else {
+      // Check for loot container first
+      const nearLoot = getNearestLootContainer(camera.position);
+      if (nearLoot) {
+        searchLootContainer(nearLoot);
+        return;
+      }
+      // Then check for vehicle
       const nearVehicle = getNearestVehicle(camera.position);
       if (nearVehicle) {
         enterVehicle(nearVehicle);
@@ -2396,8 +3483,17 @@ document.addEventListener('keydown', (event) => {
       case 'KeyS': state.moveBackward = true; break;
       case 'KeyA': state.moveLeft = true; break;
       case 'KeyD': state.moveRight = true; break;
+      case 'Space':
+        // Bail out of aircraft with parachute
+        bailOutOfAircraft();
+        break;
     }
     return;
+  }
+
+  // Parachute controls (WASD already handled by normal movement)
+  if (state.isParachuting) {
+    return; // Block other actions while parachuting
   }
 
   switch (event.code) {
@@ -2905,6 +4001,51 @@ function updateMinimap() {
     }
   }
 
+  // Draw portal (purple star)
+  const portalPos = worldToMinimap(PORTAL_POSITION.x, PORTAL_POSITION.z);
+  const portalDist = Math.sqrt(Math.pow(portalPos.x - MINIMAP_CENTER, 2) + Math.pow(portalPos.y - MINIMAP_CENTER, 2));
+
+  if (portalDist < MINIMAP_CENTER - 5) {
+    // Draw star shape for portal
+    ctx.save();
+    ctx.translate(portalPos.x, portalPos.y);
+    ctx.fillStyle = '#9932cc';
+    ctx.strokeStyle = '#da70d6';
+    ctx.lineWidth = 1;
+
+    // 5-pointed star
+    ctx.beginPath();
+    for (let i = 0; i < 5; i++) {
+      const angle = (i * 4 * Math.PI / 5) - Math.PI / 2;
+      const x = Math.cos(angle) * 6;
+      const y = Math.sin(angle) * 6;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  } else {
+    // Draw edge indicator pointing to portal when off-screen
+    const angle = Math.atan2(portalPos.y - MINIMAP_CENTER, portalPos.x - MINIMAP_CENTER);
+    const edgeRadius = MINIMAP_CENTER - 12;
+    const edgeX = MINIMAP_CENTER + Math.cos(angle) * edgeRadius;
+    const edgeY = MINIMAP_CENTER + Math.sin(angle) * edgeRadius;
+
+    ctx.save();
+    ctx.translate(edgeX, edgeY);
+    ctx.rotate(angle);
+    ctx.fillStyle = '#9932cc';
+    ctx.beginPath();
+    ctx.moveTo(8, 0);
+    ctx.lineTo(-4, -5);
+    ctx.lineTo(-4, 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
   // Draw other players (colored by team)
   for (const id in state.players) {
     const player = state.players[id];
@@ -2960,6 +4101,22 @@ function updateMinimap() {
 
 // ==================== UI UPDATES ====================
 
+function showNotification(message) {
+  const notification = document.createElement('div');
+  notification.className = 'loot-notification';
+  notification.textContent = message;
+  document.body.appendChild(notification);
+
+  // Animate in
+  setTimeout(() => notification.classList.add('visible'), 10);
+
+  // Remove after animation
+  setTimeout(() => {
+    notification.classList.remove('visible');
+    setTimeout(() => notification.remove(), 300);
+  }, 1500);
+}
+
 function updateHealth() {
   document.getElementById('health-fill').style.width = `${state.health}%`;
 
@@ -3010,7 +4167,7 @@ function animate() {
   }
 
   if (state.isPlaying && !state.isPaused) {
-    // Vehicle movement or on-foot movement
+    // Vehicle movement, parachute, or on-foot movement
     if (state.inVehicle) {
       updateVehicle(delta);
 
@@ -3023,6 +4180,9 @@ function animate() {
         y: camera.position.y,
         z: camera.position.z
       });
+    } else if (state.isParachuting) {
+      // Parachute movement
+      updateParachute(delta);
     } else {
       // Normal on-foot movement
       state.velocity.y -= GRAVITY * delta;
@@ -3095,9 +4255,23 @@ function animate() {
   const vehiclePrompt = document.getElementById('vehicle-prompt');
   if (vehiclePrompt && state.isPlaying && !state.isPaused && !state.inVehicle) {
     const nearVehicle = getNearestVehicle(camera.position);
+    if (nearVehicle) {
+      const vehicleTypeName = nearVehicle.type === 'aircraft' ? 'aircraft' :
+                              nearVehicle.type === 'motorcycle' ? 'motorcycle' : 'vehicle';
+      vehiclePrompt.innerHTML = `Press <span>E</span> to enter ${vehicleTypeName}`;
+    }
     vehiclePrompt.classList.toggle('visible', nearVehicle !== null);
   } else if (vehiclePrompt) {
     vehiclePrompt.classList.remove('visible');
+  }
+
+  // Show/hide loot prompt when near a crate
+  const lootPrompt = document.getElementById('loot-prompt');
+  if (lootPrompt && state.isPlaying && !state.isPaused && !state.inVehicle) {
+    const nearLoot = getNearestLootContainer(camera.position);
+    lootPrompt.classList.toggle('visible', nearLoot !== null);
+  } else if (lootPrompt) {
+    lootPrompt.classList.remove('visible');
   }
 
   // Apply screen shake
@@ -3108,6 +4282,12 @@ function animate() {
 
   // Update pickups (animation and collection)
   updatePickups();
+
+  // Update weapon pickups
+  updateWeaponPickups();
+
+  // Update portal (distance indicator and victory check)
+  updatePortal();
 
   renderer.render(scene, camera);
 }

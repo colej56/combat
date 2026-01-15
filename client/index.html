@@ -613,6 +613,17 @@
     #vehicle-hud.motorcycle .vehicle-name {
       color: #cc0000;
     }
+    #vehicle-hud.aircraft {
+      border-color: #3498db;
+    }
+    #vehicle-hud.aircraft .vehicle-name {
+      color: #3498db;
+    }
+    .altitude-display {
+      font-size: 18px;
+      color: #3498db;
+      margin-top: 5px;
+    }
 
     /* Vehicle prompt (when near a vehicle) */
     #vehicle-prompt {
@@ -635,6 +646,112 @@
     #vehicle-prompt span {
       color: #f39c12;
       font-weight: bold;
+    }
+
+    /* Loot prompt (when near a crate) */
+    #loot-prompt {
+      position: absolute;
+      bottom: 250px;
+      left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      background: rgba(139, 69, 19, 0.8);
+      padding: 10px 20px;
+      border-radius: 5px;
+      border: 2px solid #d4a574;
+      font-size: 16px;
+      color: white;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    #loot-prompt.visible {
+      opacity: 1;
+    }
+    #loot-prompt span {
+      color: #ffd700;
+      font-weight: bold;
+    }
+
+    /* Loot notification */
+    .loot-notification {
+      position: fixed;
+      top: 30%;
+      left: 50%;
+      transform: translateX(-50%) translateY(-20px);
+      background: rgba(0, 0, 0, 0.8);
+      color: #ffd700;
+      padding: 15px 30px;
+      border-radius: 8px;
+      font-size: 20px;
+      font-weight: bold;
+      border: 2px solid #ffd700;
+      opacity: 0;
+      transition: opacity 0.3s, transform 0.3s;
+      pointer-events: none;
+      z-index: 1000;
+    }
+    .loot-notification.visible {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* Portal indicator */
+    #portal-indicator {
+      position: absolute;
+      top: 50px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 14px;
+      color: #9932cc;
+      text-shadow: 0 0 10px #9932cc;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 5px 15px;
+      border-radius: 15px;
+      border: 1px solid #9932cc;
+    }
+    .portal-icon {
+      margin-right: 8px;
+    }
+
+    /* Victory screen */
+    #victory-screen {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      background: rgba(0, 0, 0, 0.95);
+      padding: 50px;
+      border-radius: 15px;
+      border: 3px solid #9932cc;
+      pointer-events: auto;
+      z-index: 1000;
+    }
+    #victory-screen h1 {
+      font-size: 72px;
+      color: #9932cc;
+      text-shadow: 0 0 20px #9932cc;
+      margin-bottom: 20px;
+    }
+    #victory-screen p {
+      font-size: 18px;
+      color: #fff;
+      margin: 10px 0;
+    }
+    #victory-screen button {
+      margin-top: 30px;
+      padding: 15px 40px;
+      font-size: 18px;
+      background: linear-gradient(135deg, #9932cc, #6b21a8);
+      border: none;
+      border-radius: 8px;
+      color: white;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    #victory-screen button:hover {
+      box-shadow: 0 0 20px #9932cc;
+      transform: scale(1.05);
     }
 
     /* Minimap */
@@ -875,6 +992,10 @@
         <span id="speed-value">0</span>
         <span class="speed-unit">km/h</span>
       </div>
+      <div class="altitude-display" style="display: none;">
+        ALT: <span id="altitude-value">0</span>
+        <span class="speed-unit">m</span>
+      </div>
       <div class="vehicle-controls">
         <span>WASD</span> to drive | <span>E</span> to exit
       </div>
@@ -882,6 +1003,15 @@
 
     <!-- Vehicle Enter Prompt -->
     <div id="vehicle-prompt">Press <span>E</span> to enter vehicle</div>
+
+    <!-- Loot Search Prompt -->
+    <div id="loot-prompt">Press <span>E</span> to search crate</div>
+
+    <!-- Portal Distance Indicator -->
+    <div id="portal-indicator">
+      <span class="portal-icon">&#9733;</span>
+      Portal: <span id="portal-distance">0m</span>
+    </div>
 
     <!-- Main Menu -->
     <div id="main-menu">

@@ -49,6 +49,125 @@ const ENEMY_TYPES = {
   }
 };
 
+// ==================== BUILDING LINE-OF-SIGHT SYSTEM ====================
+// Must match client's building generation for accurate collision
+
+const CHUNK_SIZE = 64;
+const BUILDING_COLORS = [0x8b7355, 0x696969, 0xa0522d, 0x708090, 0x556b2f, 0xcd853f];
+
+// Same seeded random as client
+function seededRandom(seed) {
+  const x = Math.sin(seed * 12.9898 + seed * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function getChunkSeed(cx, cz) {
+  return cx * 73856093 ^ cz * 19349663;
+}
+
+// Get buildings in a chunk (matching client generation)
+function getBuildingsInChunk(cx, cz) {
+  const buildings = [];
+  const seed = getChunkSeed(cx, cz);
+  const worldX = cx * CHUNK_SIZE;
+  const worldZ = cz * CHUNK_SIZE;
+
+  const numBuildings = Math.floor(seededRandom(seed) * 3) + 1;
+
+  for (let i = 0; i < numBuildings; i++) {
+    const bSeed = seed + i * 1000;
+    const bx = worldX + 8 + seededRandom(bSeed) * (CHUNK_SIZE - 16);
+    const bz = worldZ + 8 + seededRandom(bSeed + 1) * (CHUNK_SIZE - 16);
+    const width = 8 + seededRandom(bSeed + 2) * 8;
+    const height = 4 + seededRandom(bSeed + 3) * 6;
+    const depth = 8 + seededRandom(bSeed + 4) * 8;
+
+    buildings.push({
+      x: bx,
+      z: bz,
+      width,
+      height,
+      depth,
+      minX: bx - width / 2,
+      maxX: bx + width / 2,
+      minZ: bz - depth / 2,
+      maxZ: bz + depth / 2
+    });
+  }
+
+  return buildings;
+}
+
+// Get all buildings near a position
+function getBuildingsNear(x, z, radius) {
+  const buildings = [];
+  const minCx = Math.floor((x - radius) / CHUNK_SIZE);
+  const maxCx = Math.floor((x + radius) / CHUNK_SIZE);
+  const minCz = Math.floor((z - radius) / CHUNK_SIZE);
+  const maxCz = Math.floor((z + radius) / CHUNK_SIZE);
+
+  for (let cx = minCx; cx <= maxCx; cx++) {
+    for (let cz = minCz; cz <= maxCz; cz++) {
+      buildings.push(...getBuildingsInChunk(cx, cz));
+    }
+  }
+
+  return buildings;
+}
+
+// Check if a line segment intersects a rectangle (2D)
+function lineIntersectsRect(x1, z1, x2, z2, rect) {
+  // Check if either endpoint is inside the rect
+  if (x1 >= rect.minX && x1 <= rect.maxX && z1 >= rect.minZ && z1 <= rect.maxZ) return true;
+  if (x2 >= rect.minX && x2 <= rect.maxX && z2 >= rect.minZ && z2 <= rect.maxZ) return true;
+
+  // Check line intersection with each edge
+  const edges = [
+    { x1: rect.minX, z1: rect.minZ, x2: rect.maxX, z2: rect.minZ }, // bottom
+    { x1: rect.maxX, z1: rect.minZ, x2: rect.maxX, z2: rect.maxZ }, // right
+    { x1: rect.maxX, z1: rect.maxZ, x2: rect.minX, z2: rect.maxZ }, // top
+    { x1: rect.minX, z1: rect.maxZ, x2: rect.minX, z2: rect.minZ }  // left
+  ];
+
+  for (const edge of edges) {
+    if (linesIntersect(x1, z1, x2, z2, edge.x1, edge.z1, edge.x2, edge.z2)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// Check if two line segments intersect
+function linesIntersect(x1, y1, x2, y2, x3, y3, x4, y4) {
+  const denom = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1);
+  if (Math.abs(denom) < 0.0001) return false;
+
+  const ua = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denom;
+  const ub = ((x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)) / denom;
+
+  return ua >= 0 && ua <= 1 && ub >= 0 && ub <= 1;
+}
+
+// Check line of sight between two points
+function hasLineOfSight(x1, z1, x2, z2) {
+  const dist = Math.sqrt((x2 - x1) ** 2 + (z2 - z1) ** 2);
+  const midX = (x1 + x2) / 2;
+  const midZ = (z1 + z2) / 2;
+
+  // Get buildings in the area between the two points
+  const buildings = getBuildingsNear(midX, midZ, dist / 2 + 20);
+
+  // Check if line intersects any building
+  for (const building of buildings) {
+    if (lineIntersectsRect(x1, z1, x2, z2, building)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 // Enemy configuration for infinite map
 const MAX_ENEMIES = 15;
 const SPAWN_DISTANCE_MIN = 40;
@@ -164,6 +283,8 @@ function getClosestPlayer(enemy) {
 
   for (const id in players) {
     const player = players[id];
+    // Skip players who haven't started the game yet
+    if (!player.active) continue;
     const dist = getDistance(enemy, player);
     if (dist < closestDist) {
       closestDist = dist;
@@ -184,20 +305,27 @@ function updateEnemyAI(delta) {
     // Find closest player
     const closestPlayer = getClosestPlayer(enemy);
 
+    // Check line of sight to closest player
+    const hasLOS = closestPlayer ?
+      hasLineOfSight(enemy.x, enemy.z, closestPlayer.x, closestPlayer.z) : false;
+
     if (!closestPlayer) {
       // No players, patrol
       enemy.state = 'patrol';
       enemy.targetPlayer = null;
-    } else if (closestPlayer.distance <= type.attackRange) {
-      // In attack range
+    } else if (closestPlayer.distance <= type.attackRange && hasLOS) {
+      // In attack range AND has line of sight
       enemy.state = 'attack';
       enemy.targetPlayer = closestPlayer.id;
-    } else if (closestPlayer.distance <= type.detectRange) {
-      // Detected player, chase
+    } else if (closestPlayer.distance <= type.detectRange && hasLOS) {
+      // Detected player and can see them, chase
       enemy.state = 'chase';
       enemy.targetPlayer = closestPlayer.id;
+    } else if (closestPlayer.distance <= type.detectRange && !hasLOS && enemy.state === 'chase') {
+      // Was chasing but lost LOS - keep chasing toward last known position briefly
+      enemy.state = 'chase';
     } else {
-      // Player too far, patrol
+      // Player too far or no line of sight, patrol
       enemy.state = 'patrol';
       enemy.targetPlayer = null;
     }
@@ -246,6 +374,13 @@ function updateEnemyAI(delta) {
           const dx = closestPlayer.x - enemy.x;
           const dz = closestPlayer.z - enemy.z;
           enemy.rotation = Math.atan2(dx, dz);
+
+          // Double-check line of sight before attacking
+          if (!hasLOS) {
+            // Lost line of sight, chase instead
+            enemy.state = 'chase';
+            break;
+          }
 
           const now = Date.now();
           if (now - enemy.lastAttack >= type.attackCooldown) {
@@ -351,7 +486,8 @@ io.on('connection', (socket) => {
     health: 100,
     difficulty: 'normal',
     name: 'Player',
-    team: 'none'
+    team: 'none',
+    active: false  // Not active until they start game
   };
 
   // Send current state to new player
@@ -364,6 +500,7 @@ io.on('connection', (socket) => {
       players[socket.id].name = (data.name || 'Player').substring(0, 16);
       players[socket.id].team = ['none', 'red', 'blue'].includes(data.team) ? data.team : 'none';
       players[socket.id].difficulty = ['easy', 'normal', 'hard'].includes(data.difficulty) ? data.difficulty : 'normal';
+      players[socket.id].active = true;  // Player is now in game
       console.log(`Player ${socket.id} joined as "${players[socket.id].name}" on team ${players[socket.id].team}`);
       io.emit('players', players);
     }
@@ -410,6 +547,14 @@ io.on('connection', (socket) => {
         message,
         teamOnly: false
       });
+    }
+  });
+
+  // Handle player going back to menu
+  socket.on('setInactive', () => {
+    if (players[socket.id]) {
+      players[socket.id].active = false;
+      io.emit('players', players);
     }
   });
 
