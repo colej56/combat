@@ -27,7 +27,8 @@ const ENEMY_TYPES = {
     attackRange: 30,
     detectRange: 50,
     attackCooldown: 1000,
-    color: 0xff0000
+    color: 0xff0000,
+    isBoss: false
   },
   scout: {
     health: 60,
@@ -36,7 +37,8 @@ const ENEMY_TYPES = {
     attackRange: 25,
     detectRange: 60,
     attackCooldown: 800,
-    color: 0xff6600
+    color: 0xff6600,
+    isBoss: false
   },
   heavy: {
     health: 200,
@@ -45,9 +47,61 @@ const ENEMY_TYPES = {
     attackRange: 20,
     detectRange: 40,
     attackCooldown: 1500,
-    color: 0x990000
+    color: 0x990000,
+    isBoss: false
+  },
+  // BOSS TYPES
+  tankBoss: {
+    health: 800,
+    damage: 35,
+    speed: 2.5,
+    attackRange: 25,
+    detectRange: 80,
+    attackCooldown: 2000,
+    color: 0x4a0000,
+    isBoss: true,
+    scale: 2.5,
+    specialAttackCooldown: 8000, // Ground slam every 8 seconds
+    enrageThreshold: 0.25 // Enrages at 25% health
+  },
+  mechBoss: {
+    health: 600,
+    damage: 25,
+    speed: 4,
+    attackRange: 40,
+    detectRange: 100,
+    attackCooldown: 1500,
+    color: 0x2a4858,
+    isBoss: true,
+    scale: 2.0,
+    shieldRegenRate: 20, // Shield HP per second
+    maxShield: 200,
+    specialAttackCooldown: 6000 // Rocket barrage every 6 seconds
+  },
+  skyBoss: {
+    health: 500,
+    damage: 30,
+    speed: 12,
+    attackRange: 60,
+    detectRange: 150,
+    attackCooldown: 1000,
+    color: 0x1a1a3a,
+    isBoss: true,
+    scale: 1.8,
+    flightHeight: 40,
+    specialAttackCooldown: 5000 // Dive bomb every 5 seconds
   }
 };
+
+// Boss spawn locations (fixed positions in the world)
+const BOSS_SPAWNS = [
+  { x: 200, z: 200, type: 'tankBoss', respawnTime: 180000 }, // 3 min respawn
+  { x: -200, z: 150, type: 'mechBoss', respawnTime: 180000 },
+  { x: 0, z: -250, type: 'skyBoss', respawnTime: 180000 }
+];
+
+// Track active bosses
+const activeBosses = {};
 
 // ==================== BUILDING LINE-OF-SIGHT SYSTEM ====================
 // Must match client's building generation for accurate collision
@@ -65,22 +119,43 @@ function getChunkSeed(cx, cz) {
   return cx * 73856093 ^ cz * 19349663;
 }
 
-// Get buildings in a chunk (matching client generation)
+// Get buildings in a chunk (matching client generation with streets)
 function getBuildingsInChunk(cx, cz) {
   const buildings = [];
   const seed = getChunkSeed(cx, cz);
   const worldX = cx * CHUNK_SIZE;
   const worldZ = cz * CHUNK_SIZE;
 
-  const numBuildings = Math.floor(seededRandom(seed) * 3) + 1;
+  // Street configuration (must match client)
+  const streetWidth = 8;
+  const sidewalkWidth = 1.5;
+  const streetBuffer = streetWidth / 2 + sidewalkWidth + 2;
 
-  for (let i = 0; i < numBuildings; i++) {
-    const bSeed = seed + i * 1000;
-    const bx = worldX + 8 + seededRandom(bSeed) * (CHUNK_SIZE - 16);
-    const bz = worldZ + 8 + seededRandom(bSeed + 1) * (CHUNK_SIZE - 16);
-    const width = 8 + seededRandom(bSeed + 2) * 8;
-    const height = 4 + seededRandom(bSeed + 3) * 6;
-    const depth = 8 + seededRandom(bSeed + 4) * 8;
+  // Buildings are placed in four quadrants, avoiding streets
+  for (let q = 0; q < 4; q++) {
+    const bSeed = seed + q * 1000;
+
+    // 70% chance to have a building in each quadrant (matching client)
+    if (seededRandom(bSeed) > 0.7) continue;
+
+    // Calculate quadrant offsets
+    const qx = (q % 2 === 0) ? 0 : 1; // 0 = west, 1 = east
+    const qz = (q < 2) ? 0 : 1; // 0 = north, 1 = south
+
+    // Random position within quadrant
+    const quadrantStartX = worldX + (qx === 0 ? 4 : CHUNK_SIZE / 2 + streetBuffer);
+    const quadrantStartZ = worldZ + (qz === 0 ? 4 : CHUNK_SIZE / 2 + streetBuffer);
+    const quadrantEndX = worldX + (qx === 0 ? CHUNK_SIZE / 2 - streetBuffer : CHUNK_SIZE - 4);
+    const quadrantEndZ = worldZ + (qz === 0 ? CHUNK_SIZE / 2 - streetBuffer : CHUNK_SIZE - 4);
+
+    // Random size (matching client)
+    const width = 8 + seededRandom(bSeed + 2) * 4; // 8-12 units wide
+    const height = 4 + seededRandom(bSeed + 3) * 4; // 4-8 units tall
+    const depth = 8 + seededRandom(bSeed + 4) * 4; // 8-12 units deep
+
+    // Position building in quadrant (matching client calculation)
+    const bx = quadrantStartX + (quadrantEndX - quadrantStartX - width) * seededRandom(bSeed + 5) + width / 2;
+    const bz = quadrantStartZ + (quadrantEndZ - quadrantStartZ - depth) * seededRandom(bSeed + 6) + depth / 2;
 
     buildings.push({
       x: bx,
@@ -178,27 +253,71 @@ const DESPAWN_DISTANCE = 150;
 const enemies = {};
 let enemyIdCounter = 0;
 
-function spawnEnemy(type, x, z) {
-  const id = `enemy_${enemyIdCounter++}`;
+function spawnEnemy(type, x, z, isBossSpawn = false) {
+  const id = isBossSpawn ? `boss_${type}` : `enemy_${enemyIdCounter++}`;
   const enemyType = ENEMY_TYPES[type];
 
-  enemies[id] = {
+  if (!enemyType) {
+    console.error(`Unknown enemy type: ${type}`);
+    return null;
+  }
+
+  const enemy = {
     id,
     type,
     x,
-    y: 1,
+    y: enemyType.flightHeight || 1, // Sky boss flies high
     z,
     health: enemyType.health,
     maxHealth: enemyType.health,
-    state: 'patrol', // patrol, chase, attack
+    state: 'patrol', // patrol, chase, attack, special
     targetPlayer: null,
     patrolTarget: { x: x + (Math.random() - 0.5) * 30, z: z + (Math.random() - 0.5) * 30 },
     spawnPoint: { x, z },
     lastAttack: 0,
-    rotation: Math.random() * Math.PI * 2
+    lastSpecialAttack: 0,
+    rotation: Math.random() * Math.PI * 2,
+    isBoss: enemyType.isBoss || false,
+    scale: enemyType.scale || 1,
+    phase: 1, // Boss phase (1 = normal, 2 = enraged)
+    shield: enemyType.maxShield || 0,
+    maxShield: enemyType.maxShield || 0
   };
 
+  enemies[id] = enemy;
+
+  // Track boss separately
+  if (enemyType.isBoss) {
+    activeBosses[type] = id;
+    console.log(`Boss spawned: ${type} at (${x}, ${z})`);
+  }
+
   return id;
+}
+
+// Spawn all bosses at their fixed locations
+function spawnBosses() {
+  for (const spawn of BOSS_SPAWNS) {
+    if (!activeBosses[spawn.type]) {
+      spawnEnemy(spawn.type, spawn.x, spawn.z, true);
+    }
+  }
+}
+
+// Check for boss respawns
+const bossDeathTimes = {};
+
+function checkBossRespawns() {
+  const now = Date.now();
+  for (const spawn of BOSS_SPAWNS) {
+    // If boss is dead and respawn time has passed
+    if (bossDeathTimes[spawn.type] && now - bossDeathTimes[spawn.type] >= spawn.respawnTime) {
+      delete bossDeathTimes[spawn.type];
+      delete activeBosses[spawn.type];
+      spawnEnemy(spawn.type, spawn.x, spawn.z, true);
+      io.emit('bossSpawn', { type: spawn.type, x: spawn.x, z: spawn.z });
+    }
+  }
 }
 
 function getRandomSpawnNearPlayers() {
@@ -268,7 +387,10 @@ function initializeEnemies() {
     spawnEnemy(type, x, z);
   }
 
-  console.log(`Spawned ${Object.keys(enemies).length} enemies`);
+  // Spawn bosses at their fixed locations
+  spawnBosses();
+
+  console.log(`Spawned ${Object.keys(enemies).length} enemies (including ${Object.keys(activeBosses).length} bosses)`);
 }
 
 function getDistance(a, b) {
@@ -424,8 +546,148 @@ function updateEnemyAI(delta) {
         break;
     }
 
+    // Boss-specific updates
+    if (enemy.isBoss && closestPlayer) {
+      updateBossAI(enemy, type, closestPlayer, delta);
+    }
+
     // No bounds - infinite map
   }
+}
+
+// Boss-specific AI behavior
+function updateBossAI(enemy, type, closestPlayer, delta) {
+  const now = Date.now();
+
+  // Check for enrage phase (below 25% health)
+  if (type.enrageThreshold && enemy.health / enemy.maxHealth <= type.enrageThreshold && enemy.phase === 1) {
+    enemy.phase = 2;
+    io.emit('bossEnrage', { bossId: enemy.id, type: enemy.type });
+    console.log(`Boss ${enemy.type} is now ENRAGED!`);
+  }
+
+  // Mech boss shield regeneration
+  if (enemy.type === 'mechBoss' && enemy.shield < enemy.maxShield) {
+    enemy.shield = Math.min(enemy.maxShield, enemy.shield + type.shieldRegenRate * delta);
+  }
+
+  // Special attack cooldowns
+  if (type.specialAttackCooldown && now - enemy.lastSpecialAttack >= type.specialAttackCooldown) {
+    if (closestPlayer.distance <= type.detectRange) {
+      performBossSpecialAttack(enemy, type, closestPlayer);
+      enemy.lastSpecialAttack = now;
+    }
+  }
+
+  // Sky boss maintains flight height
+  if (enemy.type === 'skyBoss') {
+    enemy.y = type.flightHeight;
+  }
+}
+
+// Boss special attacks
+function performBossSpecialAttack(enemy, type, target) {
+  const attackDamage = type.damage * 1.5; // Special attacks do 50% more damage
+
+  switch (enemy.type) {
+    case 'tankBoss':
+      // Ground Slam - AOE damage to all nearby players
+      console.log('Tank Boss: GROUND SLAM!');
+      for (const playerId in players) {
+        const player = players[playerId];
+        if (!player.active) continue;
+        const dist = getDistance(enemy, player);
+        if (dist <= 15) { // 15 unit radius
+          const falloff = 1 - (dist / 15);
+          const damage = Math.floor(attackDamage * falloff);
+          player.health -= damage;
+          io.emit('bossSpecialAttack', {
+            bossId: enemy.id,
+            type: 'groundSlam',
+            targetId: playerId,
+            damage: damage,
+            x: enemy.x,
+            z: enemy.z,
+            radius: 15
+          });
+          if (player.health <= 0) {
+            handlePlayerDeathByBoss(playerId, enemy);
+          }
+        }
+      }
+      break;
+
+    case 'mechBoss':
+      // Rocket Barrage - Multiple projectiles
+      console.log('Mech Boss: ROCKET BARRAGE!');
+      io.emit('bossSpecialAttack', {
+        bossId: enemy.id,
+        type: 'rocketBarrage',
+        targetX: target.x,
+        targetZ: target.z,
+        x: enemy.x,
+        z: enemy.z
+      });
+      // Direct hit damage
+      const targetPlayer = players[target.id];
+      if (targetPlayer) {
+        targetPlayer.health -= attackDamage;
+        if (targetPlayer.health <= 0) {
+          handlePlayerDeathByBoss(target.id, enemy);
+        }
+      }
+      break;
+
+    case 'skyBoss':
+      // Dive Bomb - Fast dive attack
+      console.log('Sky Boss: DIVE BOMB!');
+      io.emit('bossSpecialAttack', {
+        bossId: enemy.id,
+        type: 'diveBomb',
+        targetX: target.x,
+        targetZ: target.z,
+        x: enemy.x,
+        z: enemy.z
+      });
+      // AOE damage at impact point
+      for (const playerId in players) {
+        const player = players[playerId];
+        if (!player.active) continue;
+        const dist = Math.sqrt(
+          Math.pow(target.x - player.x, 2) + Math.pow(target.z - player.z, 2)
+        );
+        if (dist <= 8) { // 8 unit radius
+          const damage = Math.floor(attackDamage * (1 - dist / 8));
+          player.health -= damage;
+          if (player.health <= 0) {
+            handlePlayerDeathByBoss(playerId, enemy);
+          }
+        }
+      }
+      break;
+  }
+}
+
+function handlePlayerDeathByBoss(playerId, enemy) {
+  const player = players[playerId];
+  if (!player) return;
+
+  player.health = 100;
+  player.x = Math.random() * 20 - 10;
+  player.y = 2;
+  player.z = Math.random() * 20 - 10;
+
+  const bossName = enemy.type.replace('Boss', ' Boss').replace(/([A-Z])/g, ' $1').trim();
+
+  io.emit('playerDeath', {
+    playerId: playerId,
+    playerName: player.name,
+    playerTeam: player.team,
+    killerId: enemy.id,
+    killerName: bossName,
+    killerTeam: 'none',
+    isEnemyKill: true
+  });
 }
 
 function respawnEnemy(id) {
@@ -464,6 +726,7 @@ setInterval(() => {
     lastSpawnCheck = now;
     despawnFarEnemies();
     spawnEnemiesNearPlayers();
+    checkBossRespawns(); // Check if any bosses should respawn
   }
 
   // Broadcast enemy state to all players
@@ -613,30 +876,103 @@ io.on('connection', (socket) => {
   socket.on('hitEnemy', (data) => {
     const enemy = enemies[data.enemyId];
     if (enemy) {
-      enemy.health -= data.damage;
+      let actualDamage = data.damage;
+
+      // Mech boss has shields
+      if (enemy.type === 'mechBoss' && enemy.shield > 0) {
+        const shieldDamage = Math.min(enemy.shield, actualDamage);
+        enemy.shield -= shieldDamage;
+        actualDamage -= shieldDamage;
+
+        if (shieldDamage > 0) {
+          io.emit('bossShieldHit', {
+            bossId: data.enemyId,
+            shieldDamage: shieldDamage,
+            remainingShield: enemy.shield
+          });
+        }
+      }
+
+      // Apply remaining damage to health
+      if (actualDamage > 0) {
+        enemy.health -= actualDamage;
+      }
 
       io.emit('enemyHit', {
         enemyId: data.enemyId,
         damage: data.damage,
-        health: enemy.health
+        health: enemy.health,
+        shield: enemy.shield || 0,
+        isBoss: enemy.isBoss
       });
 
       if (enemy.health <= 0) {
         console.log(`Enemy ${data.enemyId} was killed by ${socket.id}`);
 
-        io.emit('enemyDeath', {
-          enemyId: data.enemyId,
-          killerId: socket.id
-        });
+        // Boss death handling
+        if (enemy.isBoss) {
+          // Track death time for respawn
+          bossDeathTimes[enemy.type] = Date.now();
+          delete activeBosses[enemy.type];
 
-        // Respawn after delay
-        setTimeout(() => {
-          respawnEnemy(data.enemyId);
-          io.emit('enemyRespawn', { enemyId: data.enemyId, enemy: enemies[data.enemyId] });
-        }, 5000);
+          // Generate loot drop
+          const lootTable = getBossLoot(enemy.type);
+
+          io.emit('bossDeath', {
+            bossId: data.enemyId,
+            bossType: enemy.type,
+            killerId: socket.id,
+            killerName: players[socket.id]?.name || 'Unknown',
+            x: enemy.x,
+            z: enemy.z,
+            loot: lootTable
+          });
+
+          console.log(`BOSS DEFEATED: ${enemy.type} by ${players[socket.id]?.name}`);
+
+          // Remove boss from enemies
+          delete enemies[data.enemyId];
+        } else {
+          // Regular enemy death
+          io.emit('enemyDeath', {
+            enemyId: data.enemyId,
+            killerId: socket.id
+          });
+
+          // Respawn after delay
+          setTimeout(() => {
+            respawnEnemy(data.enemyId);
+            io.emit('enemyRespawn', { enemyId: data.enemyId, enemy: enemies[data.enemyId] });
+          }, 5000);
+        }
       }
     }
   });
+
+  // Boss loot table
+  function getBossLoot(bossType) {
+    const loot = [];
+
+    switch (bossType) {
+      case 'tankBoss':
+        loot.push({ type: 'weapon', weapon: 'shotgun' });
+        loot.push({ type: 'ammo', amount: 100 });
+        loot.push({ type: 'health', amount: 100 });
+        break;
+      case 'mechBoss':
+        loot.push({ type: 'weapon', weapon: 'rifle' });
+        loot.push({ type: 'weapon', weapon: 'sniper' });
+        loot.push({ type: 'ammo', amount: 150 });
+        break;
+      case 'skyBoss':
+        loot.push({ type: 'weapon', weapon: 'sniper' });
+        loot.push({ type: 'ammo', amount: 200 });
+        loot.push({ type: 'health', amount: 50 });
+        break;
+    }
+
+    return loot;
+  }
 
   // Handle vehicle enter
   socket.on('enterVehicle', (data) => {

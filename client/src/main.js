@@ -494,7 +494,18 @@ const WEAPONS = {
 const ENEMY_COLORS = {
   soldier: 0xff0000,
   scout: 0xff6600,
-  heavy: 0x990000
+  heavy: 0x990000,
+  // Boss colors
+  tankBoss: 0x4a0000,
+  mechBoss: 0x2a4858,
+  skyBoss: 0x1a1a3a
+};
+
+// Boss configuration
+const BOSS_CONFIG = {
+  tankBoss: { name: 'Tank Boss', scale: 2.5 },
+  mechBoss: { name: 'Mech Boss', scale: 2.0, hasShield: true },
+  skyBoss: { name: 'Sky Boss', scale: 1.8, flies: true }
 };
 
 // Game state
@@ -521,6 +532,9 @@ const state = {
   canShoot: true,
   isShooting: false,
   isDead: false,
+  isDying: false, // Death animation in progress
+  deathAnimationPhase: 0, // 0=none, 1=shake, 2=fall, 3=screen
+  originalCameraY: 0, // Store camera Y for death animation
   lastKiller: null,
   playerName: 'Player',
   team: 'none', // none, red, blue
@@ -921,6 +935,269 @@ function spawnVehicle(x, z, rotation = 0, type = 'jeep') {
   };
 
   return id;
+}
+
+// ==================== PARKED CARS ====================
+// Non-driveable vehicles that provide cover on streets
+
+const PARKED_CAR_TYPES = {
+  sedan: { length: 4, width: 1.8, height: 1.4, colors: [0x1a1a2e, 0x4a0000, 0x003366, 0x2d2d2d, 0xf5f5dc] },
+  truck: { length: 5, width: 2, height: 1.8, colors: [0x8b0000, 0x2f4f4f, 0x191970, 0x3c3c3c] },
+  sports: { length: 4.2, width: 1.9, height: 1.1, colors: [0xff0000, 0xffd700, 0x00ff00, 0xff6600] }
+};
+
+const parkedCars = [];
+
+function createParkedSedan(color) {
+  const group = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color });
+  const glassMat = new THREE.MeshStandardMaterial({ color: 0x87ceeb, transparent: true, opacity: 0.5 });
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+
+  // Main body
+  const bodyGeo = new THREE.BoxGeometry(1.8, 0.8, 4);
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  body.position.y = 0.6;
+  body.castShadow = true;
+  body.receiveShadow = true;
+  group.add(body);
+
+  // Roof/cabin
+  const cabGeo = new THREE.BoxGeometry(1.6, 0.6, 2);
+  const cab = new THREE.Mesh(cabGeo, bodyMat);
+  cab.position.set(0, 1.2, -0.2);
+  cab.castShadow = true;
+  group.add(cab);
+
+  // Windshield
+  const windshieldGeo = new THREE.BoxGeometry(1.5, 0.5, 0.1);
+  const windshield = new THREE.Mesh(windshieldGeo, glassMat);
+  windshield.position.set(0, 1.1, 0.7);
+  windshield.rotation.x = -0.3;
+  group.add(windshield);
+
+  // Rear window
+  const rearGeo = new THREE.BoxGeometry(1.4, 0.4, 0.1);
+  const rearWindow = new THREE.Mesh(rearGeo, glassMat);
+  rearWindow.position.set(0, 1.1, -1.2);
+  rearWindow.rotation.x = 0.3;
+  group.add(rearWindow);
+
+  // Wheels
+  const wheelGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.25, 12);
+  const wheelPositions = [
+    { x: -0.8, z: 1.2 }, { x: 0.8, z: 1.2 },
+    { x: -0.8, z: -1.2 }, { x: 0.8, z: -1.2 }
+  ];
+  wheelPositions.forEach(pos => {
+    const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(pos.x, 0.35, pos.z);
+    wheel.castShadow = true;
+    group.add(wheel);
+  });
+
+  // Headlights
+  const lightGeo = new THREE.BoxGeometry(0.25, 0.15, 0.1);
+  const lightMat = new THREE.MeshStandardMaterial({ color: 0xffffcc });
+  [-0.6, 0.6].forEach(x => {
+    const light = new THREE.Mesh(lightGeo, lightMat);
+    light.position.set(x, 0.5, 2);
+    group.add(light);
+  });
+
+  // Taillights
+  const tailMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+  [-0.6, 0.6].forEach(x => {
+    const tail = new THREE.Mesh(lightGeo, tailMat);
+    tail.position.set(x, 0.5, -2);
+    group.add(tail);
+  });
+
+  group.userData.isParkedCar = true;
+  group.userData.type = 'sedan';
+  return group;
+}
+
+function createParkedTruck(color) {
+  const group = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color });
+  const glassMat = new THREE.MeshStandardMaterial({ color: 0x87ceeb, transparent: true, opacity: 0.5 });
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+
+  // Cab
+  const cabGeo = new THREE.BoxGeometry(2, 1.2, 2);
+  const cab = new THREE.Mesh(cabGeo, bodyMat);
+  cab.position.set(0, 1, 1.2);
+  cab.castShadow = true;
+  cab.receiveShadow = true;
+  group.add(cab);
+
+  // Cab roof
+  const roofGeo = new THREE.BoxGeometry(1.8, 0.5, 1.5);
+  const roof = new THREE.Mesh(roofGeo, bodyMat);
+  roof.position.set(0, 1.8, 1);
+  roof.castShadow = true;
+  group.add(roof);
+
+  // Truck bed
+  const bedGeo = new THREE.BoxGeometry(2, 0.8, 2.5);
+  const bed = new THREE.Mesh(bedGeo, bodyMat);
+  bed.position.set(0, 0.8, -1);
+  bed.castShadow = true;
+  group.add(bed);
+
+  // Bed walls
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+  const wallGeo = new THREE.BoxGeometry(0.1, 0.6, 2.5);
+  [-0.95, 0.95].forEach(x => {
+    const wall = new THREE.Mesh(wallGeo, wallMat);
+    wall.position.set(x, 1.5, -1);
+    group.add(wall);
+  });
+  const backWallGeo = new THREE.BoxGeometry(2, 0.6, 0.1);
+  const backWall = new THREE.Mesh(backWallGeo, wallMat);
+  backWall.position.set(0, 1.5, -2.2);
+  group.add(backWall);
+
+  // Windshield
+  const windshieldGeo = new THREE.BoxGeometry(1.6, 0.6, 0.1);
+  const windshield = new THREE.Mesh(windshieldGeo, glassMat);
+  windshield.position.set(0, 1.6, 2.1);
+  windshield.rotation.x = -0.2;
+  group.add(windshield);
+
+  // Wheels (larger)
+  const wheelGeo = new THREE.CylinderGeometry(0.45, 0.45, 0.3, 12);
+  const wheelPositions = [
+    { x: -0.9, z: 1.5 }, { x: 0.9, z: 1.5 },
+    { x: -0.9, z: -1.5 }, { x: 0.9, z: -1.5 }
+  ];
+  wheelPositions.forEach(pos => {
+    const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(pos.x, 0.45, pos.z);
+    wheel.castShadow = true;
+    group.add(wheel);
+  });
+
+  // Headlights
+  const lightGeo = new THREE.BoxGeometry(0.3, 0.2, 0.1);
+  const lightMat = new THREE.MeshStandardMaterial({ color: 0xffffcc });
+  [-0.6, 0.6].forEach(x => {
+    const light = new THREE.Mesh(lightGeo, lightMat);
+    light.position.set(x, 0.8, 2.2);
+    group.add(light);
+  });
+
+  group.userData.isParkedCar = true;
+  group.userData.type = 'truck';
+  return group;
+}
+
+function createParkedSportsCar(color) {
+  const group = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color, metalness: 0.8, roughness: 0.2 });
+  const glassMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, transparent: true, opacity: 0.7 });
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+
+  // Low, sleek body
+  const bodyGeo = new THREE.BoxGeometry(1.9, 0.5, 4.2);
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  body.position.y = 0.4;
+  body.castShadow = true;
+  body.receiveShadow = true;
+  group.add(body);
+
+  // Sloped hood
+  const hoodGeo = new THREE.BoxGeometry(1.7, 0.3, 1.5);
+  const hood = new THREE.Mesh(hoodGeo, bodyMat);
+  hood.position.set(0, 0.5, 1.2);
+  hood.rotation.x = -0.1;
+  hood.castShadow = true;
+  group.add(hood);
+
+  // Low cabin
+  const cabGeo = new THREE.BoxGeometry(1.6, 0.45, 1.5);
+  const cab = new THREE.Mesh(cabGeo, bodyMat);
+  cab.position.set(0, 0.85, -0.3);
+  cab.castShadow = true;
+  group.add(cab);
+
+  // Windshield (very angled)
+  const windshieldGeo = new THREE.BoxGeometry(1.5, 0.4, 0.1);
+  const windshield = new THREE.Mesh(windshieldGeo, glassMat);
+  windshield.position.set(0, 0.8, 0.45);
+  windshield.rotation.x = -0.6;
+  group.add(windshield);
+
+  // Rear spoiler
+  const spoilerGeo = new THREE.BoxGeometry(1.8, 0.1, 0.3);
+  const spoiler = new THREE.Mesh(spoilerGeo, bodyMat);
+  spoiler.position.set(0, 0.9, -2);
+  group.add(spoiler);
+  // Spoiler supports
+  const supportGeo = new THREE.BoxGeometry(0.1, 0.3, 0.1);
+  [-0.7, 0.7].forEach(x => {
+    const support = new THREE.Mesh(supportGeo, bodyMat);
+    support.position.set(x, 0.75, -2);
+    group.add(support);
+  });
+
+  // Wheels (low profile)
+  const wheelGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.3, 16);
+  const wheelPositions = [
+    { x: -0.85, z: 1.3 }, { x: 0.85, z: 1.3 },
+    { x: -0.85, z: -1.3 }, { x: 0.85, z: -1.3 }
+  ];
+  wheelPositions.forEach(pos => {
+    const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(pos.x, 0.3, pos.z);
+    wheel.castShadow = true;
+    group.add(wheel);
+  });
+
+  // Headlights (sharp)
+  const lightGeo = new THREE.BoxGeometry(0.4, 0.1, 0.1);
+  const lightMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.2 });
+  [-0.5, 0.5].forEach(x => {
+    const light = new THREE.Mesh(lightGeo, lightMat);
+    light.position.set(x, 0.35, 2.1);
+    group.add(light);
+  });
+
+  group.userData.isParkedCar = true;
+  group.userData.type = 'sports';
+  return group;
+}
+
+function createParkedCar(type, color) {
+  switch (type) {
+    case 'truck': return createParkedTruck(color);
+    case 'sports': return createParkedSportsCar(color);
+    default: return createParkedSedan(color);
+  }
+}
+
+function spawnParkedCar(x, z, rotation, type, seed) {
+  const config = PARKED_CAR_TYPES[type];
+  const colorIndex = Math.floor(seededRandom(seed) * config.colors.length);
+  const color = config.colors[colorIndex];
+
+  const car = createParkedCar(type, color);
+  car.position.set(x, 0, z);
+  car.rotation.y = rotation;
+
+  // Create collision box for cover
+  car.userData.collisionBox = {
+    width: config.width,
+    height: config.height,
+    depth: config.length
+  };
+
+  parkedCars.push(car);
+  return car;
 }
 
 function getNearestVehicle(position, maxDistance = 5) {
@@ -2133,6 +2410,9 @@ function updateDayNightCycle(delta) {
   // Update hemisphere light
   hemiLight.intensity = ambientIntensity * 0.8;
 
+  // Update streetlights based on time of day
+  updateStreetlights(dayNight.time);
+
   // Update time display
   updateTimeDisplay();
 }
@@ -2178,6 +2458,184 @@ const groundMaterial = new THREE.MeshStandardMaterial({
 
 // Building colors
 const BUILDING_COLORS = [0x808080, 0x606060, 0x707070, 0x505050, 0x909090, 0x555555, 0x656565, 0x757575];
+
+// Streetlight system
+const streetlights = [];
+const STREETLIGHT_SPACING = 20; // Distance between streetlights
+
+function createStreetlight(x, z) {
+  const group = new THREE.Group();
+
+  // Pole
+  const poleGeo = new THREE.CylinderGeometry(0.15, 0.2, 6, 8);
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.8, roughness: 0.3 });
+  const pole = new THREE.Mesh(poleGeo, poleMat);
+  pole.position.y = 3;
+  pole.castShadow = true;
+  group.add(pole);
+
+  // Arm (horizontal part)
+  const armGeo = new THREE.CylinderGeometry(0.08, 0.08, 1.5, 8);
+  const arm = new THREE.Mesh(armGeo, poleMat);
+  arm.rotation.z = Math.PI / 2;
+  arm.position.set(0.75, 5.8, 0);
+  group.add(arm);
+
+  // Lamp housing
+  const housingGeo = new THREE.CylinderGeometry(0.4, 0.3, 0.5, 8);
+  const housingMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.9, roughness: 0.2 });
+  const housing = new THREE.Mesh(housingGeo, housingMat);
+  housing.position.set(1.4, 5.6, 0);
+  group.add(housing);
+
+  // Light bulb (emissive when on)
+  const bulbGeo = new THREE.SphereGeometry(0.2, 8, 8);
+  const bulbMat = new THREE.MeshStandardMaterial({
+    color: 0xffffcc,
+    emissive: 0x000000,
+    emissiveIntensity: 0
+  });
+  const bulb = new THREE.Mesh(bulbGeo, bulbMat);
+  bulb.position.set(1.4, 5.3, 0);
+  group.add(bulb);
+
+  // Point light (for actual illumination)
+  const light = new THREE.PointLight(0xffeecc, 0, 25, 2);
+  light.position.set(1.4, 5.3, 0);
+  light.castShadow = false; // Too many shadows would be expensive
+  group.add(light);
+
+  group.position.set(x, 0, z);
+
+  // Store references for day/night control
+  group.userData.bulb = bulb;
+  group.userData.light = light;
+  group.userData.isOn = false;
+
+  streetlights.push(group);
+  return group;
+}
+
+function updateStreetlights(timeOfDay) {
+  // Turn on lights during night hours (0.75 = dusk to 0.25 = dawn)
+  const shouldBeOn = timeOfDay > 0.7 || timeOfDay < 0.25;
+
+  for (const streetlight of streetlights) {
+    if (streetlight.userData.isOn !== shouldBeOn) {
+      streetlight.userData.isOn = shouldBeOn;
+      const bulb = streetlight.userData.bulb;
+      const light = streetlight.userData.light;
+
+      if (shouldBeOn) {
+        // Turn on
+        bulb.material.emissive.setHex(0xffffaa);
+        bulb.material.emissiveIntensity = 2;
+        light.intensity = 1.5;
+      } else {
+        // Turn off
+        bulb.material.emissive.setHex(0x000000);
+        bulb.material.emissiveIntensity = 0;
+        light.intensity = 0;
+      }
+    }
+  }
+}
+
+// Door system
+const doors = {};
+let doorIdCounter = 0;
+const DOOR_INTERACT_DISTANCE = 3;
+const DOOR_OPEN_ANGLE = Math.PI / 2; // 90 degrees
+const DOOR_SPEED = 4; // Radians per second
+
+function createDoor(x, z, rotation, buildingGroup) {
+  const id = `door_${doorIdCounter++}`;
+
+  // Door pivot (positioned at hinge edge)
+  const pivot = new THREE.Group();
+
+  // Door mesh
+  const doorGeo = new THREE.BoxGeometry(1.9, 2.9, 0.1);
+  const doorMat = new THREE.MeshStandardMaterial({ color: 0x5c4033 });
+  const doorMesh = new THREE.Mesh(doorGeo, doorMat);
+  doorMesh.position.x = 0.95; // Offset so it rotates from edge
+  doorMesh.position.y = 1.45;
+  doorMesh.castShadow = true;
+  pivot.add(doorMesh);
+
+  // Door handle
+  const handleGeo = new THREE.BoxGeometry(0.1, 0.3, 0.15);
+  const handleMat = new THREE.MeshStandardMaterial({ color: 0xccaa00, metalness: 0.8 });
+  const handle = new THREE.Mesh(handleGeo, handleMat);
+  handle.position.set(1.6, 1.3, 0.1);
+  pivot.add(handle);
+
+  // Position pivot at door hinge location
+  pivot.position.set(-1, 0, 0); // Left edge of door opening
+  pivot.rotation.y = rotation;
+
+  doors[id] = {
+    id,
+    pivot,
+    x: x, // World position
+    z: z,
+    isOpen: false,
+    targetAngle: 0,
+    currentAngle: 0,
+    baseRotation: rotation
+  };
+
+  return pivot;
+}
+
+function getNearestDoor(position) {
+  let nearest = null;
+  let nearestDist = DOOR_INTERACT_DISTANCE;
+
+  for (const id in doors) {
+    const door = doors[id];
+    const dx = position.x - door.x;
+    const dz = position.z - door.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+
+    if (dist < nearestDist) {
+      nearestDist = dist;
+      nearest = door;
+    }
+  }
+
+  return nearest;
+}
+
+function toggleDoor(door) {
+  if (!door) return;
+
+  door.isOpen = !door.isOpen;
+  door.targetAngle = door.isOpen ? DOOR_OPEN_ANGLE : 0;
+
+  playSound('footstep'); // Door sound
+}
+
+function updateDoors(delta) {
+  for (const id in doors) {
+    const door = doors[id];
+
+    // Animate door toward target angle
+    if (Math.abs(door.currentAngle - door.targetAngle) > 0.01) {
+      const direction = door.targetAngle > door.currentAngle ? 1 : -1;
+      door.currentAngle += direction * DOOR_SPEED * delta;
+
+      // Clamp to target
+      if (direction > 0 && door.currentAngle > door.targetAngle) {
+        door.currentAngle = door.targetAngle;
+      } else if (direction < 0 && door.currentAngle < door.targetAngle) {
+        door.currentAngle = door.targetAngle;
+      }
+
+      door.pivot.rotation.y = door.baseRotation + door.currentAngle;
+    }
+  }
+}
 
 // Loot container system
 const lootContainers = {};
@@ -2333,6 +2791,13 @@ function createBuildingWithInterior(x, z, width, height, depth, color, seed, chu
   aboveDoor.castShadow = true;
   group.add(aboveDoor);
 
+  // Door (at front of building)
+  const doorWorldX = x;
+  const doorWorldZ = z + depth / 2;
+  const door = createDoor(doorWorldX, doorWorldZ, 0, group);
+  door.position.set(0, 0, depth / 2 - wallThickness / 2);
+  group.add(door);
+
   // Left wall
   const leftWallGeo = new THREE.BoxGeometry(wallThickness, height, depth);
   const leftWall = new THREE.Mesh(leftWallGeo, wallMat);
@@ -2430,23 +2895,194 @@ function createChunk(cx, cz) {
   gridHelper.material.transparent = true;
   chunk.add(gridHelper);
 
-  // Generate buildings procedurally
-  const numBuildings = Math.floor(seededRandom(seed) * 3) + 1; // 1-3 buildings per chunk
+  // Street configuration
+  const streetWidth = 8;
+  const streetY = 0.05; // Slightly above ground to prevent z-fighting
+  const streetColor = 0x333333;
+  const lineColor = 0xcccc00;
 
-  for (let i = 0; i < numBuildings; i++) {
-    const bSeed = seed + i * 1000;
+  // Horizontal street (runs along X axis through middle)
+  const hStreetGeo = new THREE.PlaneGeometry(CHUNK_SIZE, streetWidth);
+  const hStreetMat = new THREE.MeshStandardMaterial({ color: streetColor });
+  const hStreet = new THREE.Mesh(hStreetGeo, hStreetMat);
+  hStreet.rotation.x = -Math.PI / 2;
+  hStreet.position.set(worldX + CHUNK_SIZE / 2, streetY, worldZ + CHUNK_SIZE / 2);
+  hStreet.receiveShadow = true;
+  chunk.add(hStreet);
 
-    // Random position within chunk (with some padding)
-    const bx = worldX + 8 + seededRandom(bSeed) * (CHUNK_SIZE - 16);
-    const bz = worldZ + 8 + seededRandom(bSeed + 1) * (CHUNK_SIZE - 16);
+  // Vertical street (runs along Z axis through middle)
+  const vStreetGeo = new THREE.PlaneGeometry(streetWidth, CHUNK_SIZE);
+  const vStreetMat = new THREE.MeshStandardMaterial({ color: streetColor });
+  const vStreet = new THREE.Mesh(vStreetGeo, vStreetMat);
+  vStreet.rotation.x = -Math.PI / 2;
+  vStreet.position.set(worldX + CHUNK_SIZE / 2, streetY, worldZ + CHUNK_SIZE / 2);
+  vStreet.receiveShadow = true;
+  chunk.add(vStreet);
+
+  // Center line for horizontal street (yellow dashed)
+  const hLineGeo = new THREE.PlaneGeometry(CHUNK_SIZE, 0.2);
+  const hLineMat = new THREE.MeshStandardMaterial({ color: lineColor });
+  const hLine = new THREE.Mesh(hLineGeo, hLineMat);
+  hLine.rotation.x = -Math.PI / 2;
+  hLine.position.set(worldX + CHUNK_SIZE / 2, streetY + 0.01, worldZ + CHUNK_SIZE / 2);
+  chunk.add(hLine);
+
+  // Center line for vertical street
+  const vLineGeo = new THREE.PlaneGeometry(0.2, CHUNK_SIZE);
+  const vLineMat = new THREE.MeshStandardMaterial({ color: lineColor });
+  const vLine = new THREE.Mesh(vLineGeo, vLineMat);
+  vLine.rotation.x = -Math.PI / 2;
+  vLine.position.set(worldX + CHUNK_SIZE / 2, streetY + 0.01, worldZ + CHUNK_SIZE / 2);
+  chunk.add(vLine);
+
+  // Sidewalks along streets
+  const sidewalkWidth = 1.5;
+  const sidewalkColor = 0x777777;
+  const sidewalkMat = new THREE.MeshStandardMaterial({ color: sidewalkColor });
+
+  // Sidewalks for horizontal street
+  const hSidewalk1Geo = new THREE.PlaneGeometry(CHUNK_SIZE, sidewalkWidth);
+  const hSidewalk1 = new THREE.Mesh(hSidewalk1Geo, sidewalkMat);
+  hSidewalk1.rotation.x = -Math.PI / 2;
+  hSidewalk1.position.set(worldX + CHUNK_SIZE / 2, streetY + 0.02, worldZ + CHUNK_SIZE / 2 - streetWidth / 2 - sidewalkWidth / 2);
+  chunk.add(hSidewalk1);
+
+  const hSidewalk2 = new THREE.Mesh(hSidewalk1Geo, sidewalkMat);
+  hSidewalk2.rotation.x = -Math.PI / 2;
+  hSidewalk2.position.set(worldX + CHUNK_SIZE / 2, streetY + 0.02, worldZ + CHUNK_SIZE / 2 + streetWidth / 2 + sidewalkWidth / 2);
+  chunk.add(hSidewalk2);
+
+  // Sidewalks for vertical street
+  const vSidewalk1Geo = new THREE.PlaneGeometry(sidewalkWidth, CHUNK_SIZE);
+  const vSidewalk1 = new THREE.Mesh(vSidewalk1Geo, sidewalkMat);
+  vSidewalk1.rotation.x = -Math.PI / 2;
+  vSidewalk1.position.set(worldX + CHUNK_SIZE / 2 - streetWidth / 2 - sidewalkWidth / 2, streetY + 0.02, worldZ + CHUNK_SIZE / 2);
+  chunk.add(vSidewalk1);
+
+  const vSidewalk2 = new THREE.Mesh(vSidewalk1Geo, sidewalkMat);
+  vSidewalk2.rotation.x = -Math.PI / 2;
+  vSidewalk2.position.set(worldX + CHUNK_SIZE / 2 + streetWidth / 2 + sidewalkWidth / 2, streetY + 0.02, worldZ + CHUNK_SIZE / 2);
+  chunk.add(vSidewalk2);
+
+  // Add streetlights along the roads
+  const lightOffset = streetWidth / 2 + sidewalkWidth + 0.5; // Position on sidewalk edge
+
+  // Streetlights along horizontal street (north side, facing south)
+  for (let lx = STREETLIGHT_SPACING / 2; lx < CHUNK_SIZE; lx += STREETLIGHT_SPACING) {
+    // Skip the intersection area
+    if (Math.abs(lx - CHUNK_SIZE / 2) < streetWidth / 2 + 2) continue;
+
+    const light1 = createStreetlight(worldX + lx, worldZ + CHUNK_SIZE / 2 - lightOffset);
+    light1.rotation.y = Math.PI; // Face toward street
+    chunk.add(light1);
+  }
+
+  // Streetlights along vertical street (west side, facing east)
+  for (let lz = STREETLIGHT_SPACING / 2; lz < CHUNK_SIZE; lz += STREETLIGHT_SPACING) {
+    // Skip the intersection area
+    if (Math.abs(lz - CHUNK_SIZE / 2) < streetWidth / 2 + 2) continue;
+
+    const light2 = createStreetlight(worldX + CHUNK_SIZE / 2 - lightOffset, worldZ + lz);
+    light2.rotation.y = Math.PI / 2; // Face toward street
+    chunk.add(light2);
+  }
+
+  // Add parked cars along streets
+  const parkingOffset = streetWidth / 2 - 1.5; // Park on the edge of street
+  const carSpacing = 8; // Space between potential car spots
+  const carTypes = ['sedan', 'sedan', 'sedan', 'truck', 'sports']; // Weighted distribution
+
+  // Parked cars along horizontal street
+  for (let px = carSpacing; px < CHUNK_SIZE - carSpacing; px += carSpacing) {
+    // Skip intersection area
+    if (Math.abs(px - CHUNK_SIZE / 2) < streetWidth / 2 + 3) continue;
+
+    const carSeed = seed + 5000 + Math.floor(px);
+
+    // 40% chance for a car on each side
+    if (seededRandom(carSeed) < 0.4) {
+      const carType = carTypes[Math.floor(seededRandom(carSeed + 1) * carTypes.length)];
+      const carX = worldX + px;
+      const carZ = worldZ + CHUNK_SIZE / 2 - parkingOffset;
+      const car = spawnParkedCar(carX, carZ, Math.PI / 2, carType, carSeed + 2);
+      chunk.add(car);
+      chunk.userData.objects.push(car);
+      collidableObjects.push(car);
+    }
+
+    if (seededRandom(carSeed + 10) < 0.4) {
+      const carType = carTypes[Math.floor(seededRandom(carSeed + 11) * carTypes.length)];
+      const carX = worldX + px;
+      const carZ = worldZ + CHUNK_SIZE / 2 + parkingOffset;
+      const car = spawnParkedCar(carX, carZ, -Math.PI / 2, carType, carSeed + 12);
+      chunk.add(car);
+      chunk.userData.objects.push(car);
+      collidableObjects.push(car);
+    }
+  }
+
+  // Parked cars along vertical street
+  for (let pz = carSpacing; pz < CHUNK_SIZE - carSpacing; pz += carSpacing) {
+    // Skip intersection area
+    if (Math.abs(pz - CHUNK_SIZE / 2) < streetWidth / 2 + 3) continue;
+
+    const carSeed = seed + 6000 + Math.floor(pz);
+
+    // 40% chance for a car on each side
+    if (seededRandom(carSeed) < 0.4) {
+      const carType = carTypes[Math.floor(seededRandom(carSeed + 1) * carTypes.length)];
+      const carX = worldX + CHUNK_SIZE / 2 - parkingOffset;
+      const carZ = worldZ + pz;
+      const car = spawnParkedCar(carX, carZ, 0, carType, carSeed + 2);
+      chunk.add(car);
+      chunk.userData.objects.push(car);
+      collidableObjects.push(car);
+    }
+
+    if (seededRandom(carSeed + 10) < 0.4) {
+      const carType = carTypes[Math.floor(seededRandom(carSeed + 11) * carTypes.length)];
+      const carX = worldX + CHUNK_SIZE / 2 + parkingOffset;
+      const carZ = worldZ + pz;
+      const car = spawnParkedCar(carX, carZ, Math.PI, carType, carSeed + 12);
+      chunk.add(car);
+      chunk.userData.objects.push(car);
+      collidableObjects.push(car);
+    }
+  }
+
+  // Generate buildings in the four quadrants (avoiding streets in the middle)
+  // Quadrants: NW (0), NE (1), SW (2), SE (3)
+  const quadrantSize = (CHUNK_SIZE - streetWidth - sidewalkWidth * 2) / 2;
+  const streetBuffer = streetWidth / 2 + sidewalkWidth + 2; // Keep buildings away from street
+
+  // Place 1 building per quadrant (4 total potential, some may be skipped)
+  for (let q = 0; q < 4; q++) {
+    const bSeed = seed + q * 1000;
+
+    // 70% chance to have a building in each quadrant
+    if (seededRandom(bSeed) > 0.7) continue;
+
+    // Calculate quadrant offsets
+    const qx = (q % 2 === 0) ? 0 : 1; // 0 = west, 1 = east
+    const qz = (q < 2) ? 0 : 1; // 0 = north, 1 = south
+
+    // Random position within quadrant
+    const quadrantStartX = worldX + (qx === 0 ? 4 : CHUNK_SIZE / 2 + streetBuffer);
+    const quadrantStartZ = worldZ + (qz === 0 ? 4 : CHUNK_SIZE / 2 + streetBuffer);
+    const quadrantEndX = worldX + (qx === 0 ? CHUNK_SIZE / 2 - streetBuffer : CHUNK_SIZE - 4);
+    const quadrantEndZ = worldZ + (qz === 0 ? CHUNK_SIZE / 2 - streetBuffer : CHUNK_SIZE - 4);
 
     // Random size - keep buildings reasonable for interiors
-    const width = 8 + seededRandom(bSeed + 2) * 6; // 8-14 units wide
+    const width = 8 + seededRandom(bSeed + 2) * 4; // 8-12 units wide
     const height = 4 + seededRandom(bSeed + 3) * 4; // 4-8 units tall (single story)
-    const depth = 8 + seededRandom(bSeed + 4) * 6; // 8-14 units deep
+    const depth = 8 + seededRandom(bSeed + 4) * 4; // 8-12 units deep
+
+    // Position building in quadrant (centered)
+    const bx = quadrantStartX + (quadrantEndX - quadrantStartX - width) * seededRandom(bSeed + 5) + width / 2;
+    const bz = quadrantStartZ + (quadrantEndZ - quadrantStartZ - depth) * seededRandom(bSeed + 6) + depth / 2;
 
     // Random color
-    const colorIndex = Math.floor(seededRandom(bSeed + 5) * BUILDING_COLORS.length);
+    const colorIndex = Math.floor(seededRandom(bSeed + 7) * BUILDING_COLORS.length);
     const color = BUILDING_COLORS[colorIndex];
 
     // Create building with interior and loot
@@ -2517,6 +3153,20 @@ function removeChunk(cx, cz) {
   chunk.userData.objects.forEach(obj => {
     const idx = collidableObjects.indexOf(obj);
     if (idx > -1) collidableObjects.splice(idx, 1);
+  });
+
+  // Remove streetlights in this chunk from the global array
+  chunk.children.forEach(child => {
+    const idx = streetlights.indexOf(child);
+    if (idx > -1) streetlights.splice(idx, 1);
+  });
+
+  // Remove parked cars in this chunk from the global array
+  chunk.children.forEach(child => {
+    if (child.userData && child.userData.isParkedCar) {
+      const idx = parkedCars.indexOf(child);
+      if (idx > -1) parkedCars.splice(idx, 1);
+    }
   });
 
   scene.remove(chunk);
@@ -2690,6 +3340,11 @@ function spawnChunkVehicles(cx, cz, seed) {
 // ==================== ENEMY SYSTEM ====================
 
 function createEnemyMesh(type) {
+  // Check if it's a boss type
+  if (BOSS_CONFIG[type]) {
+    return createBossMesh(type);
+  }
+
   const group = new THREE.Group();
   const color = ENEMY_COLORS[type] || 0xff0000;
 
@@ -2765,6 +3420,231 @@ function createEnemyMesh(type) {
 
   // Store body mesh for hit detection
   group.userData.bodyMesh = body;
+  group.userData.isBoss = false;
+
+  return group;
+}
+
+// Create boss mesh based on type
+function createBossMesh(type) {
+  switch (type) {
+    case 'tankBoss': return createTankBossMesh();
+    case 'mechBoss': return createMechBossMesh();
+    case 'skyBoss': return createSkyBossMesh();
+    default: return createTankBossMesh();
+  }
+}
+
+// Tank Boss - Large, heavily armored ground unit
+function createTankBossMesh() {
+  const group = new THREE.Group();
+  const color = ENEMY_COLORS.tankBoss;
+  const metalMat = new THREE.MeshStandardMaterial({ color, metalness: 0.6, roughness: 0.4 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x1a0000 });
+
+  // Massive body/hull
+  const hullGeo = new THREE.BoxGeometry(3, 2, 4);
+  const hull = new THREE.Mesh(hullGeo, metalMat);
+  hull.position.y = 1.5;
+  hull.castShadow = true;
+  group.add(hull);
+
+  // Turret on top
+  const turretGeo = new THREE.CylinderGeometry(1, 1.2, 1, 8);
+  const turret = new THREE.Mesh(turretGeo, metalMat);
+  turret.position.y = 3;
+  turret.castShadow = true;
+  group.add(turret);
+
+  // Main cannon
+  const cannonGeo = new THREE.CylinderGeometry(0.2, 0.25, 3, 8);
+  const cannon = new THREE.Mesh(cannonGeo, darkMat);
+  cannon.rotation.x = Math.PI / 2;
+  cannon.position.set(0, 3, -2);
+  cannon.castShadow = true;
+  group.add(cannon);
+
+  // Armor plates
+  const plateGeo = new THREE.BoxGeometry(0.2, 1.5, 3);
+  [-1.6, 1.6].forEach(x => {
+    const plate = new THREE.Mesh(plateGeo, darkMat);
+    plate.position.set(x, 1.5, 0);
+    plate.castShadow = true;
+    group.add(plate);
+  });
+
+  // Treads (simplified)
+  const treadGeo = new THREE.BoxGeometry(0.8, 1, 4.5);
+  const treadMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+  [-1.8, 1.8].forEach(x => {
+    const tread = new THREE.Mesh(treadGeo, treadMat);
+    tread.position.set(x, 0.5, 0);
+    group.add(tread);
+  });
+
+  // Spikes on front
+  const spikeGeo = new THREE.ConeGeometry(0.15, 0.5, 4);
+  for (let i = -1; i <= 1; i++) {
+    const spike = new THREE.Mesh(spikeGeo, darkMat);
+    spike.rotation.x = Math.PI / 2;
+    spike.position.set(i * 0.8, 1.5, -2.3);
+    group.add(spike);
+  }
+
+  // Glowing eyes
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+  const eyeGeo = new THREE.SphereGeometry(0.15, 8, 8);
+  [-0.4, 0.4].forEach(x => {
+    const eye = new THREE.Mesh(eyeGeo, eyeMat);
+    eye.position.set(x, 3.3, -0.8);
+    group.add(eye);
+  });
+
+  group.userData.isBoss = true;
+  group.userData.bossType = 'tankBoss';
+  group.scale.set(1, 1, 1); // Will be scaled by server data
+
+  return group;
+}
+
+// Mech Boss - Bipedal robot with shields
+function createMechBossMesh() {
+  const group = new THREE.Group();
+  const color = ENEMY_COLORS.mechBoss;
+  const metalMat = new THREE.MeshStandardMaterial({ color, metalness: 0.8, roughness: 0.2 });
+  const accentMat = new THREE.MeshStandardMaterial({ color: 0x4080a0 });
+
+  // Torso
+  const torsoGeo = new THREE.BoxGeometry(2, 2.5, 1.5);
+  const torso = new THREE.Mesh(torsoGeo, metalMat);
+  torso.position.y = 3;
+  torso.castShadow = true;
+  group.add(torso);
+
+  // Head/cockpit
+  const headGeo = new THREE.BoxGeometry(1.2, 0.8, 1);
+  const head = new THREE.Mesh(headGeo, metalMat);
+  head.position.y = 4.6;
+  head.castShadow = true;
+  group.add(head);
+
+  // Visor
+  const visorGeo = new THREE.BoxGeometry(1, 0.3, 0.1);
+  const visorMat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+  const visor = new THREE.Mesh(visorGeo, visorMat);
+  visor.position.set(0, 4.6, -0.55);
+  group.add(visor);
+
+  // Arms with weapons
+  const armGeo = new THREE.BoxGeometry(0.6, 2, 0.6);
+  [-1.5, 1.5].forEach(x => {
+    const arm = new THREE.Mesh(armGeo, metalMat);
+    arm.position.set(x, 3, 0);
+    arm.castShadow = true;
+    group.add(arm);
+
+    // Weapon pods
+    const weaponGeo = new THREE.CylinderGeometry(0.3, 0.4, 1.5, 6);
+    const weapon = new THREE.Mesh(weaponGeo, accentMat);
+    weapon.rotation.x = Math.PI / 2;
+    weapon.position.set(x, 2.5, -0.8);
+    group.add(weapon);
+  });
+
+  // Legs
+  const legGeo = new THREE.BoxGeometry(0.8, 2.5, 0.8);
+  [-0.7, 0.7].forEach(x => {
+    const leg = new THREE.Mesh(legGeo, metalMat);
+    leg.position.set(x, 1, 0);
+    leg.castShadow = true;
+    group.add(leg);
+  });
+
+  // Feet
+  const footGeo = new THREE.BoxGeometry(1, 0.3, 1.2);
+  [-0.7, 0.7].forEach(x => {
+    const foot = new THREE.Mesh(footGeo, accentMat);
+    foot.position.set(x, -0.1, 0.2);
+    group.add(foot);
+  });
+
+  // Shield bubble (for mech boss)
+  const shieldGeo = new THREE.SphereGeometry(3, 16, 16);
+  const shieldMat = new THREE.MeshBasicMaterial({
+    color: 0x00ffff,
+    transparent: true,
+    opacity: 0.2,
+    side: THREE.DoubleSide
+  });
+  const shield = new THREE.Mesh(shieldGeo, shieldMat);
+  shield.position.y = 2.5;
+  shield.name = 'shield';
+  group.add(shield);
+
+  group.userData.isBoss = true;
+  group.userData.bossType = 'mechBoss';
+
+  return group;
+}
+
+// Sky Boss - Flying enemy
+function createSkyBossMesh() {
+  const group = new THREE.Group();
+  const color = ENEMY_COLORS.skyBoss;
+  const metalMat = new THREE.MeshStandardMaterial({ color, metalness: 0.7, roughness: 0.3 });
+  const glowMat = new THREE.MeshBasicMaterial({ color: 0x8800ff });
+
+  // Main body - sleek aircraft shape
+  const bodyGeo = new THREE.ConeGeometry(1, 4, 6);
+  const body = new THREE.Mesh(bodyGeo, metalMat);
+  body.rotation.x = Math.PI / 2;
+  body.position.z = 1;
+  body.castShadow = true;
+  group.add(body);
+
+  // Cockpit
+  const cockpitGeo = new THREE.SphereGeometry(0.8, 8, 8);
+  const cockpitMat = new THREE.MeshBasicMaterial({ color: 0x4400aa });
+  const cockpit = new THREE.Mesh(cockpitGeo, cockpitMat);
+  cockpit.position.set(0, 0.3, -0.5);
+  group.add(cockpit);
+
+  // Wings
+  const wingGeo = new THREE.BoxGeometry(5, 0.1, 1.5);
+  const wing = new THREE.Mesh(wingGeo, metalMat);
+  wing.position.set(0, 0, 0.5);
+  wing.castShadow = true;
+  group.add(wing);
+
+  // Tail fins
+  const finGeo = new THREE.BoxGeometry(0.1, 1.5, 1);
+  [-0.8, 0.8].forEach(x => {
+    const fin = new THREE.Mesh(finGeo, metalMat);
+    fin.position.set(x, 0.5, 2.5);
+    fin.rotation.z = x > 0 ? 0.3 : -0.3;
+    group.add(fin);
+  });
+
+  // Engine glow
+  const engineGeo = new THREE.CylinderGeometry(0.4, 0.6, 0.5, 8);
+  [-1.5, 1.5].forEach(x => {
+    const engine = new THREE.Mesh(engineGeo, glowMat);
+    engine.rotation.x = Math.PI / 2;
+    engine.position.set(x, -0.2, 2);
+    group.add(engine);
+  });
+
+  // Weapons under wings
+  const weaponGeo = new THREE.CylinderGeometry(0.15, 0.15, 1, 6);
+  [-2, 2].forEach(x => {
+    const weapon = new THREE.Mesh(weaponGeo, metalMat);
+    weapon.rotation.x = Math.PI / 2;
+    weapon.position.set(x, -0.3, 0);
+    group.add(weapon);
+  });
+
+  group.userData.isBoss = true;
+  group.userData.bossType = 'skyBoss';
 
   return group;
 }
@@ -3193,42 +4073,112 @@ function quitToMenu() {
 const deathScreen = document.getElementById('death-screen');
 const deathMessage = document.getElementById('death-message');
 const respawnTimer = document.getElementById('respawn-timer');
+const deathAnimationOverlay = document.getElementById('death-animation-overlay');
+const gameCanvas = document.getElementById('game-canvas');
 
-// Handle player death with death screen and countdown
+// Death animation state
+let deathCameraStartY = 0;
+let deathCameraStartRotation = 0;
+let deathAnimationStartTime = 0;
+
+// Handle player death with cinematic animation
 function handleDeath(killerName) {
-  if (state.isDead) return;
+  if (state.isDead || state.isDying) return;
 
+  state.isDying = true;
   state.isDead = true;
   state.lastKiller = killerName;
-  playSound('death');
+  state.deathAnimationPhase = 1;
+  deathAnimationStartTime = Date.now();
 
-  // Show death screen
-  deathMessage.textContent = `Killed by ${killerName}`;
-  deathScreen.classList.remove('hidden');
+  // Store original camera position for animation
+  deathCameraStartY = camera.position.y;
+  deathCameraStartRotation = camera.rotation.z;
+
+  playSound('death');
   crosshair.classList.add('hidden');
 
-  // Full screen red flash
-  document.getElementById('damage-overlay').style.opacity = 0.6;
+  // Set up death message
+  deathMessage.textContent = `Killed by ${killerName}`;
 
-  // Countdown respawn
-  let countdown = 3;
-  respawnTimer.textContent = countdown;
+  // Phase 1: Intense red flash and shake (0-500ms)
+  document.getElementById('damage-overlay').style.opacity = 0.8;
+  if (gameCanvas) gameCanvas.classList.add('shake');
 
-  const countdownInterval = setInterval(() => {
-    countdown--;
+  // Phase 2: Camera falls, grayscale starts (500-2000ms)
+  setTimeout(() => {
+    state.deathAnimationPhase = 2;
+    if (gameCanvas) gameCanvas.classList.remove('shake');
+
+    // Start grayscale and vignette
+    deathAnimationOverlay.classList.add('active', 'grayscale', 'vignette');
+
+    // Fade red overlay
+    document.getElementById('damage-overlay').style.transition = 'opacity 1s';
+    document.getElementById('damage-overlay').style.opacity = 0.3;
+  }, 500);
+
+  // Phase 3: Show death screen (2000ms)
+  setTimeout(() => {
+    state.deathAnimationPhase = 3;
+
+    // Show death screen with animation
+    deathScreen.classList.remove('hidden');
+    deathScreen.classList.add('visible');
+
+    // Start countdown
+    let countdown = 3;
     respawnTimer.textContent = countdown;
 
-    if (countdown <= 0) {
-      clearInterval(countdownInterval);
-      respawn();
-    }
-  }, 1000);
+    const countdownInterval = setInterval(() => {
+      countdown--;
+      respawnTimer.textContent = countdown;
+
+      if (countdown <= 0) {
+        clearInterval(countdownInterval);
+        respawn();
+      }
+    }, 1000);
+  }, 2000);
+}
+
+// Update death animation (called from game loop)
+function updateDeathAnimation(delta) {
+  if (!state.isDying || state.deathAnimationPhase !== 2) return;
+
+  const elapsed = Date.now() - deathAnimationStartTime - 500; // Offset for phase 2 start
+  const fallDuration = 1500; // 1.5 seconds to fall
+  const progress = Math.min(elapsed / fallDuration, 1);
+
+  // Ease-in curve for natural falling
+  const easeIn = progress * progress;
+
+  // Camera falls to ground level
+  const fallDistance = deathCameraStartY - 0.5; // Fall to near ground
+  camera.position.y = deathCameraStartY - (fallDistance * easeIn);
+
+  // Camera tilts to the side as player falls
+  camera.rotation.z = deathCameraStartRotation + (Math.PI / 6 * easeIn); // Tilt 30 degrees
+
+  // Slight forward pitch
+  camera.rotation.x = Math.min(camera.rotation.x + delta * 0.3, 0.3);
 }
 
 // Respawn player
 function respawn() {
+  // Reset death animation state
+  state.isDying = false;
   state.isDead = false;
+  state.deathAnimationPhase = 0;
+
+  // Reset health
   state.health = 100;
+
+  // Reset camera rotation
+  camera.rotation.z = 0;
+  camera.rotation.x = 0;
+
+  // Random respawn position
   camera.position.set(
     Math.random() * 20 - 10,
     PLAYER_HEIGHT,
@@ -3245,9 +4195,22 @@ function respawn() {
 
   updateHealth();
 
+  // Hide death screen and reset classes
   deathScreen.classList.add('hidden');
-  crosshair.classList.remove('hidden');
+  deathScreen.classList.remove('visible');
+
+  // Reset overlays
+  deathAnimationOverlay.classList.remove('active', 'grayscale', 'vignette');
+  document.getElementById('damage-overlay').style.transition = 'opacity 0.1s';
   document.getElementById('damage-overlay').style.opacity = 0;
+
+  // Reset canvas classes
+  if (gameCanvas) {
+    gameCanvas.classList.remove('shake', 'death-tilt');
+  }
+
+  // Show crosshair
+  crosshair.classList.remove('hidden');
 
   // Re-request pointer lock for mouse control
   renderer.domElement.requestPointerLock();
@@ -3450,12 +4413,18 @@ document.addEventListener('keydown', (event) => {
 
   if (!state.isPlaying || state.isPaused) return;
 
-  // Vehicle enter/exit with E key, or search loot containers
+  // Vehicle enter/exit with E key, search loot containers, or open doors
   if (event.code === 'KeyE') {
     if (state.inVehicle) {
       exitVehicle();
     } else {
-      // Check for loot container first
+      // Check for door first
+      const nearDoor = getNearestDoor(camera.position);
+      if (nearDoor) {
+        toggleDoor(nearDoor);
+        return;
+      }
+      // Check for loot container
       const nearLoot = getNearestLootContainer(camera.position);
       if (nearLoot) {
         searchLootContainer(nearLoot);
@@ -3650,7 +4619,26 @@ socket.on('enemies', (enemies) => {
       // Create new enemy mesh
       const mesh = createEnemyMesh(enemyData.type);
       scene.add(mesh);
-      state.enemies[id] = { mesh, data: enemyData };
+
+      // Apply boss scale if applicable
+      if (enemyData.scale && enemyData.scale !== 1) {
+        mesh.scale.set(enemyData.scale, enemyData.scale, enemyData.scale);
+      }
+
+      state.enemies[id] = {
+        mesh,
+        data: enemyData,
+        // Store boss-specific properties at top level for easy access
+        id: enemyData.id,
+        type: enemyData.type,
+        isBoss: enemyData.isBoss || false,
+        health: enemyData.health,
+        maxHealth: enemyData.maxHealth,
+        shield: enemyData.shield || 0,
+        maxShield: enemyData.maxShield || 0,
+        x: enemyData.x,
+        z: enemyData.z
+      };
     }
 
     // Update enemy position and rotation
@@ -3659,9 +4647,27 @@ socket.on('enemies', (enemies) => {
     enemy.mesh.rotation.y = enemyData.rotation;
     enemy.data = enemyData;
 
-    // Update health bar
-    const healthPercent = enemyData.health / enemyData.maxHealth;
-    updateEnemyHealthBar(enemy.mesh, healthPercent);
+    // Update top-level properties
+    enemy.health = enemyData.health;
+    enemy.maxHealth = enemyData.maxHealth;
+    enemy.shield = enemyData.shield || 0;
+    enemy.maxShield = enemyData.maxShield || 0;
+    enemy.x = enemyData.x;
+    enemy.z = enemyData.z;
+
+    // Update health bar (don't show on bosses - they have HUD bar)
+    if (!enemyData.isBoss) {
+      const healthPercent = enemyData.health / enemyData.maxHealth;
+      updateEnemyHealthBar(enemy.mesh, healthPercent);
+    }
+
+    // Update mech boss shield visual
+    if (enemyData.type === 'mechBoss') {
+      const shieldMesh = enemy.mesh.children.find(c => c.name === 'shield');
+      if (shieldMesh) {
+        shieldMesh.material.opacity = enemyData.shield > 0 ? 0.2 + (enemyData.shield / enemyData.maxShield) * 0.3 : 0;
+      }
+    }
 
     // Make health bar face camera
     enemy.mesh.children.forEach(child => {
@@ -3682,9 +4688,15 @@ socket.on('enemies', (enemies) => {
     }
   }
 
-  // Update enemy count in UI
-  const aliveEnemies = Object.values(enemies).filter(e => e.health > 0).length;
-  document.getElementById('enemy-count').textContent = `Enemies: ${aliveEnemies}`;
+  // Update enemy count in UI (exclude bosses from regular count)
+  const aliveEnemies = Object.values(enemies).filter(e => e.health > 0 && !e.isBoss).length;
+  const aliveBosses = Object.values(enemies).filter(e => e.health > 0 && e.isBoss).length;
+  document.getElementById('enemy-count').textContent = aliveBosses > 0
+    ? `Enemies: ${aliveEnemies} | Bosses: ${aliveBosses}`
+    : `Enemies: ${aliveEnemies}`;
+
+  // Update boss health bar
+  updateNearbyBoss();
 });
 
 socket.on('playerShoot', (data) => {
@@ -3768,6 +4780,261 @@ socket.on('enemyDeath', (data) => {
 socket.on('enemyRespawn', (data) => {
   console.log(`Enemy ${data.enemyId} respawned`);
 });
+
+// ==================== BOSS EVENT HANDLERS ====================
+
+// Track current boss being fought
+let currentBossId = null;
+let currentBossData = null;
+
+// Boss health bar elements
+const bossHealthContainer = document.getElementById('boss-health-container');
+const bossNameElement = document.getElementById('boss-name');
+const bossHealthFill = document.getElementById('boss-health-fill');
+const bossShieldBar = document.getElementById('boss-shield-bar');
+const bossShieldFill = document.getElementById('boss-shield-fill');
+const bossHealthText = document.getElementById('boss-health-text');
+const bossHealthBar = document.getElementById('boss-health-bar');
+const bossDefeatElement = document.getElementById('boss-defeat');
+
+function updateBossHealthBar(health, maxHealth, shield = 0, maxShield = 0) {
+  if (!currentBossId) return;
+
+  const healthPercent = Math.max(0, health / maxHealth) * 100;
+  bossHealthFill.style.width = `${healthPercent}%`;
+  bossHealthText.textContent = `${Math.max(0, Math.floor(health))} / ${maxHealth}`;
+
+  // Update shield if boss has one
+  if (maxShield > 0) {
+    bossShieldBar.classList.add('visible');
+    const shieldPercent = Math.max(0, shield / maxShield) * 100;
+    bossShieldFill.style.width = `${shieldPercent}%`;
+  } else {
+    bossShieldBar.classList.remove('visible');
+  }
+}
+
+function showBossHealthBar(bossId, bossType) {
+  currentBossId = bossId;
+  const bossConfig = BOSS_CONFIG[bossType];
+  const bossName = bossConfig ? bossConfig.name : bossType.replace('Boss', ' Boss');
+
+  bossNameElement.textContent = bossName.toUpperCase();
+  bossHealthContainer.classList.add('visible');
+  bossHealthBar.classList.remove('enraged');
+
+  // Show shield bar for mech boss
+  if (bossType === 'mechBoss') {
+    bossShieldBar.classList.add('visible');
+  } else {
+    bossShieldBar.classList.remove('visible');
+  }
+}
+
+function hideBossHealthBar() {
+  currentBossId = null;
+  currentBossData = null;
+  bossHealthContainer.classList.remove('visible');
+}
+
+// Handle boss death
+socket.on('bossDeath', (data) => {
+  console.log(`BOSS DEFEATED: ${data.bossType} by ${data.killerName}!`);
+  playSound('explosion');
+
+  // Hide boss health bar
+  if (currentBossId === data.bossId) {
+    hideBossHealthBar();
+  }
+
+  // Show boss defeat notification
+  bossDefeatElement.textContent = `${BOSS_CONFIG[data.bossType]?.name || 'BOSS'} DEFEATED!`;
+  bossDefeatElement.classList.add('visible');
+  setTimeout(() => bossDefeatElement.classList.remove('visible'), 3000);
+
+  // Track kill
+  if (data.killerId === socket.id) {
+    state.kills++;
+
+    // Award loot to the player who killed the boss
+    if (data.loot) {
+      data.loot.forEach(item => {
+        if (item.type === 'weapon') {
+          state.weapons[item.weapon] = true;
+          console.log(`Looted weapon: ${item.weapon}`);
+        } else if (item.type === 'ammo') {
+          state.ammoReserve = Math.min(state.ammoReserve + item.amount, WEAPONS[state.currentWeapon].maxAmmo);
+          updateAmmoCounter();
+          console.log(`Looted ammo: ${item.amount}`);
+        } else if (item.type === 'health') {
+          state.health = Math.min(state.health + item.amount, 100);
+          updateHealth();
+          console.log(`Looted health: ${item.amount}`);
+        }
+      });
+    }
+  }
+
+  // Create explosion effect at boss position
+  for (let i = 0; i < 20; i++) {
+    const offset = new THREE.Vector3(
+      (Math.random() - 0.5) * 5,
+      Math.random() * 3,
+      (Math.random() - 0.5) * 5
+    );
+    createHitEffect(new THREE.Vector3(data.x, 2, data.z).add(offset), 0xff8800);
+  }
+
+  // Remove boss from enemies
+  if (state.enemies[data.bossId]) {
+    if (state.enemies[data.bossId].mesh) {
+      scene.remove(state.enemies[data.bossId].mesh);
+    }
+    delete state.enemies[data.bossId];
+  }
+});
+
+// Handle boss enrage
+socket.on('bossEnrage', (data) => {
+  console.log(`Boss ${data.type} is ENRAGED!`);
+  if (currentBossId === data.bossId) {
+    bossHealthBar.classList.add('enraged');
+    bossNameElement.textContent = `${BOSS_CONFIG[data.type]?.name || 'BOSS'} - ENRAGED!`;
+  }
+  playSound('explosion');
+});
+
+// Handle boss special attacks
+socket.on('bossSpecialAttack', (data) => {
+  console.log(`Boss special attack: ${data.type}`);
+  playSound('explosion');
+
+  switch (data.type) {
+    case 'groundSlam':
+      // Create shockwave effect
+      createGroundSlamEffect(data.x, data.z, data.radius);
+      break;
+
+    case 'rocketBarrage':
+      // Create rocket trail effects
+      createRocketBarrageEffect(data.x, data.z, data.targetX, data.targetZ);
+      break;
+
+    case 'diveBomb':
+      // Create dive bomb impact effect
+      createDiveBombEffect(data.targetX, data.targetZ);
+      break;
+  }
+});
+
+// Handle boss shield hit
+socket.on('bossShieldHit', (data) => {
+  if (currentBossId === data.bossId && currentBossData) {
+    currentBossData.shield = data.remainingShield;
+    updateBossHealthBar(
+      currentBossData.health,
+      currentBossData.maxHealth,
+      data.remainingShield,
+      currentBossData.maxShield
+    );
+  }
+  // Play shield hit sound (different from regular hit)
+  playSound('hit');
+});
+
+// Visual effects for boss special attacks
+function createGroundSlamEffect(x, z, radius) {
+  // Create expanding ring
+  const ringGeo = new THREE.RingGeometry(0.5, radius, 32);
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: 0xff4400,
+    transparent: true,
+    opacity: 0.7,
+    side: THREE.DoubleSide
+  });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(x, 0.1, z);
+  scene.add(ring);
+
+  // Animate ring expansion
+  let scale = 0;
+  const animateRing = () => {
+    scale += 0.1;
+    ring.scale.set(scale, scale, 1);
+    ring.material.opacity = 0.7 * (1 - scale);
+
+    if (scale < 1) {
+      requestAnimationFrame(animateRing);
+    } else {
+      scene.remove(ring);
+    }
+  };
+  animateRing();
+}
+
+function createRocketBarrageEffect(fromX, fromZ, toX, toZ) {
+  // Create multiple rocket trails
+  for (let i = 0; i < 5; i++) {
+    setTimeout(() => {
+      const offsetX = (Math.random() - 0.5) * 10;
+      const offsetZ = (Math.random() - 0.5) * 10;
+      createHitEffect(new THREE.Vector3(toX + offsetX, 1, toZ + offsetZ), 0xff6600);
+    }, i * 100);
+  }
+}
+
+function createDiveBombEffect(x, z) {
+  // Create impact crater effect
+  for (let i = 0; i < 15; i++) {
+    const angle = (i / 15) * Math.PI * 2;
+    const dist = 2 + Math.random() * 4;
+    createHitEffect(
+      new THREE.Vector3(x + Math.cos(angle) * dist, 0.5, z + Math.sin(angle) * dist),
+      0x8800ff
+    );
+  }
+}
+
+// Update boss health bar based on nearby bosses
+function updateNearbyBoss() {
+  if (!state.isPlaying || state.isDead) {
+    hideBossHealthBar();
+    return;
+  }
+
+  const playerPos = camera.position;
+  let nearestBoss = null;
+  let nearestDist = 100; // Boss health bar shows within 100 units
+
+  for (const id in state.enemies) {
+    const enemy = state.enemies[id];
+    if (enemy.isBoss && enemy.health > 0) {
+      const dist = Math.sqrt(
+        Math.pow(enemy.x - playerPos.x, 2) + Math.pow(enemy.z - playerPos.z, 2)
+      );
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearestBoss = enemy;
+      }
+    }
+  }
+
+  if (nearestBoss) {
+    if (currentBossId !== nearestBoss.id) {
+      showBossHealthBar(nearestBoss.id, nearestBoss.type);
+    }
+    currentBossData = nearestBoss;
+    updateBossHealthBar(
+      nearestBoss.health,
+      nearestBoss.maxHealth,
+      nearestBoss.shield || 0,
+      nearestBoss.maxShield || 0
+    );
+  } else if (currentBossId) {
+    hideBossHealthBar();
+  }
+}
 
 // Handle other player entering a vehicle
 socket.on('playerEnteredVehicle', (data) => {
@@ -4145,6 +5412,11 @@ function animate() {
 
   const delta = clock.getDelta();
 
+  // Update death animation if dying
+  if (state.isDying) {
+    updateDeathAnimation(delta);
+  }
+
   if (state.isPlaying && !state.isPaused && state.isShooting && WEAPONS[state.currentWeapon].automatic) {
     shoot();
   }
@@ -4166,7 +5438,7 @@ function animate() {
     }
   }
 
-  if (state.isPlaying && !state.isPaused) {
+  if (state.isPlaying && !state.isPaused && !state.isDead) {
     // Vehicle movement, parachute, or on-foot movement
     if (state.inVehicle) {
       updateVehicle(delta);
@@ -4274,6 +5546,21 @@ function animate() {
     lootPrompt.classList.remove('visible');
   }
 
+  // Show/hide door prompt when near a door
+  const doorPrompt = document.getElementById('door-prompt');
+  if (doorPrompt && state.isPlaying && !state.isPaused && !state.inVehicle) {
+    const nearDoor = getNearestDoor(camera.position);
+    if (nearDoor) {
+      doorPrompt.textContent = nearDoor.isOpen ? 'Press E to close door' : 'Press E to open door';
+      doorPrompt.innerHTML = nearDoor.isOpen ?
+        'Press <span>E</span> to close door' :
+        'Press <span>E</span> to open door';
+    }
+    doorPrompt.classList.toggle('visible', nearDoor !== null);
+  } else if (doorPrompt) {
+    doorPrompt.classList.remove('visible');
+  }
+
   // Apply screen shake
   updateScreenShake(camera);
 
@@ -4285,6 +5572,9 @@ function animate() {
 
   // Update weapon pickups
   updateWeaponPickups();
+
+  // Update doors (animation)
+  updateDoors(delta);
 
   // Update portal (distance indicator and victory check)
   updatePortal();
