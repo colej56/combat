@@ -54,7 +54,7 @@ Combat is a browser-based 3D multiplayer first-person shooter with client-server
 - **P** - Deploy parachute (when falling from aircraft)
 - **T** - All chat
 - **Y** - Team chat
-- **Tab** - Scoreboard
+- **Tab** - Inventory (weapon attachments)
 - **ESC** - Pause menu
 
 ### Day/Night Cycle
@@ -71,6 +71,25 @@ Combat is a browser-based 3D multiplayer first-person shooter with client-server
 - Health pickups (+50 HP) and ammo crates (+30 ammo)
 - Death animation with camera fall and grayscale effect
 - Respawn after 3-second countdown on death
+
+### Weapon Attachments
+Unlock attachments by getting kills with each weapon. Press Tab to open the inventory and equip attachments.
+
+| Attachment | Effect | Kills Required |
+|------------|--------|----------------|
+| Scope | -30% spread, +1.5x zoom | 10 |
+| Silencer | -50% muzzle flash, -40% sound, +10% spread | 15 |
+| Extended Mag | +50% magazine size | 20 |
+| Grip | -25% spread, -10% recoil | 25 |
+| Laser Sight | -20% spread | 30 |
+
+**Weapon Compatibility:**
+- Pistol: Silencer, Extended Mag, Laser Sight
+- Rifle: All attachments
+- Shotgun: Extended Mag, Grip, Laser Sight
+- Sniper: Scope, Silencer, Extended Mag
+
+Progress is saved to localStorage.
 
 ### Boss Fights
 - **Tank Boss**: 800 HP, ground-based, slow but devastating ground slam attack, enrages at 25% HP

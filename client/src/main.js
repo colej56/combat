@@ -490,6 +490,219 @@ const WEAPONS = {
   }
 };
 
+// Weapon attachments
+const ATTACHMENTS = {
+  scope: { name: 'Scope', killsRequired: 10, modifiers: { spreadMult: 0.7, zoomMult: 1.5 } },
+  silencer: { name: 'Silencer', killsRequired: 15, modifiers: { muzzleFlashMult: 0.5, soundMult: 0.6, spreadMult: 1.1 } },
+  extendedMag: { name: 'Extended Mag', killsRequired: 20, modifiers: { magSizeMult: 1.5 } },
+  grip: { name: 'Grip', killsRequired: 25, modifiers: { spreadMult: 0.75, recoilMult: 0.9 } },
+  laserSight: { name: 'Laser Sight', killsRequired: 30, modifiers: { spreadMult: 0.8 } }
+};
+
+const WEAPON_ATTACHMENT_SLOTS = {
+  pistol: ['silencer', 'extendedMag', 'laserSight'],
+  rifle: ['scope', 'silencer', 'extendedMag', 'grip', 'laserSight'],
+  shotgun: ['extendedMag', 'grip', 'laserSight'],
+  sniper: ['scope', 'silencer', 'extendedMag']
+};
+
+// Get weapon stats with attachment modifiers applied
+function getEffectiveWeaponStats(weaponType) {
+  const baseWeapon = WEAPONS[weaponType];
+  const equipped = state.equippedAttachments[weaponType] || [];
+
+  // Start with base stats
+  const stats = {
+    name: baseWeapon.name,
+    damage: baseWeapon.damage,
+    fireRate: baseWeapon.fireRate,
+    reloadTime: baseWeapon.reloadTime,
+    magSize: baseWeapon.magSize,
+    maxAmmo: baseWeapon.maxAmmo,
+    spread: baseWeapon.spread,
+    automatic: baseWeapon.automatic,
+    pellets: baseWeapon.pellets,
+    // Attachment-specific
+    muzzleFlashMult: 1,
+    soundMult: 1,
+    zoomMult: 1,
+    recoilMult: 1
+  };
+
+  // Apply each equipped attachment's modifiers
+  for (const attachmentType of equipped) {
+    const attachment = ATTACHMENTS[attachmentType];
+    if (!attachment) continue;
+
+    const mods = attachment.modifiers;
+    if (mods.spreadMult) stats.spread *= mods.spreadMult;
+    if (mods.magSizeMult) stats.magSize = Math.floor(stats.magSize * mods.magSizeMult);
+    if (mods.muzzleFlashMult) stats.muzzleFlashMult *= mods.muzzleFlashMult;
+    if (mods.soundMult) stats.soundMult *= mods.soundMult;
+    if (mods.zoomMult) stats.zoomMult *= mods.zoomMult;
+    if (mods.recoilMult) stats.recoilMult *= mods.recoilMult;
+  }
+
+  return stats;
+}
+
+// Track kills for attachment unlocks
+function trackWeaponKill(weaponType) {
+  state.weaponKills[weaponType]++;
+  checkAttachmentUnlocks(weaponType);
+  saveAttachmentData();
+}
+
+// Check if any new attachments should be unlocked
+function checkAttachmentUnlocks(weaponType) {
+  const kills = state.weaponKills[weaponType];
+  const availableSlots = WEAPON_ATTACHMENT_SLOTS[weaponType] || [];
+
+  for (const attachmentType of availableSlots) {
+    const attachment = ATTACHMENTS[attachmentType];
+    if (!attachment) continue;
+
+    // Check if already unlocked
+    if (state.unlockedAttachments[weaponType].includes(attachmentType)) continue;
+
+    // Check if kill threshold met
+    if (kills >= attachment.killsRequired) {
+      state.unlockedAttachments[weaponType].push(attachmentType);
+      showAttachmentUnlock(weaponType, attachmentType);
+    }
+  }
+}
+
+// Show unlock notification
+function showAttachmentUnlock(weaponType, attachmentType) {
+  const attachment = ATTACHMENTS[attachmentType];
+  const weapon = WEAPONS[weaponType];
+
+  const unlockEl = document.getElementById('attachment-unlock');
+  if (unlockEl) {
+    unlockEl.textContent = `${attachment.name} unlocked for ${weapon.name}!`;
+    unlockEl.classList.remove('hidden');
+
+    setTimeout(() => {
+      unlockEl.classList.add('hidden');
+    }, 3000);
+  }
+}
+
+// Toggle attachment equip/unequip
+function toggleAttachment(weaponType, attachmentType) {
+  const equipped = state.equippedAttachments[weaponType];
+  const index = equipped.indexOf(attachmentType);
+
+  if (index === -1) {
+    // Equip
+    equipped.push(attachmentType);
+  } else {
+    // Unequip
+    equipped.splice(index, 1);
+  }
+
+  saveAttachmentData();
+  renderInventoryUI();
+}
+
+// Save attachment data to localStorage
+function saveAttachmentData() {
+  const data = {
+    weaponKills: state.weaponKills,
+    unlockedAttachments: state.unlockedAttachments,
+    equippedAttachments: state.equippedAttachments
+  };
+  localStorage.setItem('combatAttachments', JSON.stringify(data));
+}
+
+// Load attachment data from localStorage
+function loadAttachmentData() {
+  const saved = localStorage.getItem('combatAttachments');
+  if (saved) {
+    try {
+      const data = JSON.parse(saved);
+      if (data.weaponKills) state.weaponKills = data.weaponKills;
+      if (data.unlockedAttachments) state.unlockedAttachments = data.unlockedAttachments;
+      if (data.equippedAttachments) state.equippedAttachments = data.equippedAttachments;
+    } catch (e) {
+      console.warn('Failed to load attachment data:', e);
+    }
+  }
+}
+
+// Open inventory screen
+function openInventory() {
+  if (state.gameState !== 'playing') return;
+
+  state.inventoryOpen = true;
+  document.getElementById('inventory-screen').classList.remove('hidden');
+  document.exitPointerLock();
+  renderInventoryUI();
+}
+
+// Close inventory screen
+function closeInventory() {
+  state.inventoryOpen = false;
+  document.getElementById('inventory-screen').classList.add('hidden');
+
+  if (state.gameState === 'playing') {
+    renderer.domElement.requestPointerLock();
+  }
+}
+
+// Render the inventory UI
+function renderInventoryUI() {
+  const container = document.getElementById('weapon-slots');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  const weaponTypes = ['pistol', 'rifle', 'shotgun', 'sniper'];
+
+  for (const weaponType of weaponTypes) {
+    const weapon = WEAPONS[weaponType];
+    const availableSlots = WEAPON_ATTACHMENT_SLOTS[weaponType] || [];
+    const unlocked = state.unlockedAttachments[weaponType] || [];
+    const equipped = state.equippedAttachments[weaponType] || [];
+    const kills = state.weaponKills[weaponType] || 0;
+
+    const slotDiv = document.createElement('div');
+    slotDiv.className = 'weapon-slot';
+
+    const header = document.createElement('div');
+    header.className = 'weapon-slot-header';
+    header.innerHTML = `<strong>${weapon.name}</strong> <span class="kill-count">(${kills} kills)</span>`;
+    slotDiv.appendChild(header);
+
+    const attachmentsDiv = document.createElement('div');
+    attachmentsDiv.className = 'attachments-list';
+
+    for (const attachmentType of availableSlots) {
+      const attachment = ATTACHMENTS[attachmentType];
+      const isUnlocked = unlocked.includes(attachmentType);
+      const isEquipped = equipped.includes(attachmentType);
+
+      const itemDiv = document.createElement('div');
+      itemDiv.className = 'attachment-item';
+      if (!isUnlocked) itemDiv.classList.add('locked');
+      if (isEquipped) itemDiv.classList.add('equipped');
+
+      if (isUnlocked) {
+        itemDiv.textContent = attachment.name;
+        itemDiv.onclick = () => toggleAttachment(weaponType, attachmentType);
+      } else {
+        itemDiv.textContent = `${attachment.name} (${attachment.killsRequired} kills)`;
+      }
+
+      attachmentsDiv.appendChild(itemDiv);
+    }
+
+    slotDiv.appendChild(attachmentsDiv);
+    container.appendChild(slotDiv);
+  }
+}
+
 // Enemy type colors
 const ENEMY_COLORS = {
   soldier: 0xff0000,
@@ -563,7 +776,12 @@ const state = {
   // Parachute state
   isParachuting: false,
   parachuteVelocity: new THREE.Vector3(0, 0, 0),
-  parachuteMesh: null
+  parachuteMesh: null,
+  // Weapon attachments
+  weaponKills: { pistol: 0, rifle: 0, shotgun: 0, sniper: 0 },
+  unlockedAttachments: { pistol: [], rifle: [], shotgun: [], sniper: [] },
+  equippedAttachments: { pistol: [], rifle: [], shotgun: [], sniper: [] },
+  inventoryOpen: false
 };
 
 // ==================== VEHICLE SYSTEM ====================
@@ -625,14 +843,14 @@ function createJeepMesh() {
   const hoodGeo = new THREE.BoxGeometry(2.3, 0.3, 1.2);
   const hood = new THREE.Mesh(hoodGeo, bodyMat);
   hood.position.set(0, 1.1, 1.2);
-  hood.castShadow = true;
+  hood.castShadow = false;
   group.add(hood);
 
   // Cab/roof frame
   const cabGeo = new THREE.BoxGeometry(2.3, 0.8, 1.8);
   const cab = new THREE.Mesh(cabGeo, bodyMat);
   cab.position.set(0, 1.7, -0.3);
-  cab.castShadow = true;
+  cab.castShadow = false;
   group.add(cab);
 
   // Windshield
@@ -658,7 +876,7 @@ function createJeepMesh() {
     const wheel = new THREE.Mesh(wheelGeo, wheelMat);
     wheel.rotation.z = Math.PI / 2;
     wheel.position.set(pos.x, 0.4, pos.z);
-    wheel.castShadow = true;
+    wheel.castShadow = false;
     group.add(wheel);
   });
 
@@ -696,14 +914,14 @@ function createMotorcycleMesh() {
   const frame = new THREE.Mesh(frameGeo, frameMat);
   frame.position.set(0, 0.7, 0);
   frame.rotation.x = 0.1;
-  frame.castShadow = true;
+  frame.castShadow = false;
   group.add(frame);
 
   // Fuel tank
   const tankGeo = new THREE.BoxGeometry(0.5, 0.4, 0.8);
   const tank = new THREE.Mesh(tankGeo, accentMat);
   tank.position.set(0, 1, 0.2);
-  tank.castShadow = true;
+  tank.castShadow = false;
   group.add(tank);
 
   // Seat
@@ -711,7 +929,7 @@ function createMotorcycleMesh() {
   const seatMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a });
   const seat = new THREE.Mesh(seatGeo, seatMat);
   seat.position.set(0, 1.0, -0.4);
-  seat.castShadow = true;
+  seat.castShadow = false;
   group.add(seat);
 
   // Front fork
@@ -739,21 +957,21 @@ function createMotorcycleMesh() {
   const frontWheel = new THREE.Mesh(wheelGeo, wheelMat);
   frontWheel.rotation.z = Math.PI / 2;
   frontWheel.position.set(0, 0.4, 1.1);
-  frontWheel.castShadow = true;
+  frontWheel.castShadow = false;
   group.add(frontWheel);
 
   // Rear wheel
   const rearWheel = new THREE.Mesh(wheelGeo, wheelMat);
   rearWheel.rotation.z = Math.PI / 2;
   rearWheel.position.set(0, 0.4, -0.8);
-  rearWheel.castShadow = true;
+  rearWheel.castShadow = false;
   group.add(rearWheel);
 
   // Engine block
   const engineGeo = new THREE.BoxGeometry(0.5, 0.35, 0.5);
   const engine = new THREE.Mesh(engineGeo, frameMat);
   engine.position.set(0, 0.5, -0.1);
-  engine.castShadow = true;
+  engine.castShadow = false;
   group.add(engine);
 
   // Exhaust pipes
@@ -803,7 +1021,7 @@ function createAircraftMesh() {
   const nose = new THREE.Mesh(noseGeo, bodyMat);
   nose.rotation.x = -Math.PI / 2;
   nose.position.set(0, 0, 3.7);
-  nose.castShadow = true;
+  nose.castShadow = false;
   group.add(nose);
 
   // Cockpit canopy
@@ -817,7 +1035,7 @@ function createAircraftMesh() {
   const wingGeo = new THREE.BoxGeometry(10, 0.15, 1.5);
   const wings = new THREE.Mesh(wingGeo, bodyMat);
   wings.position.set(0, 0, -0.5);
-  wings.castShadow = true;
+  wings.castShadow = false;
   group.add(wings);
 
   // Wing tips (red)
@@ -833,14 +1051,14 @@ function createAircraftMesh() {
   const tailFinGeo = new THREE.BoxGeometry(0.15, 1.5, 1);
   const tailFin = new THREE.Mesh(tailFinGeo, bodyMat);
   tailFin.position.set(0, 0.75, -2.8);
-  tailFin.castShadow = true;
+  tailFin.castShadow = false;
   group.add(tailFin);
 
   // Horizontal stabilizers
   const hStabGeo = new THREE.BoxGeometry(3, 0.1, 0.8);
   const hStab = new THREE.Mesh(hStabGeo, bodyMat);
   hStab.position.set(0, 0, -2.8);
-  hStab.castShadow = true;
+  hStab.castShadow = false;
   group.add(hStab);
 
   // Propeller hub
@@ -966,7 +1184,7 @@ function createParkedSedan(color) {
   const cabGeo = new THREE.BoxGeometry(1.6, 0.6, 2);
   const cab = new THREE.Mesh(cabGeo, bodyMat);
   cab.position.set(0, 1.2, -0.2);
-  cab.castShadow = true;
+  cab.castShadow = false;
   group.add(cab);
 
   // Windshield
@@ -993,7 +1211,7 @@ function createParkedSedan(color) {
     const wheel = new THREE.Mesh(wheelGeo, wheelMat);
     wheel.rotation.z = Math.PI / 2;
     wheel.position.set(pos.x, 0.35, pos.z);
-    wheel.castShadow = true;
+    wheel.castShadow = false;
     group.add(wheel);
   });
 
@@ -1029,7 +1247,7 @@ function createParkedTruck(color) {
   const cabGeo = new THREE.BoxGeometry(2, 1.2, 2);
   const cab = new THREE.Mesh(cabGeo, bodyMat);
   cab.position.set(0, 1, 1.2);
-  cab.castShadow = true;
+  cab.castShadow = false;
   cab.receiveShadow = true;
   group.add(cab);
 
@@ -1037,14 +1255,14 @@ function createParkedTruck(color) {
   const roofGeo = new THREE.BoxGeometry(1.8, 0.5, 1.5);
   const roof = new THREE.Mesh(roofGeo, bodyMat);
   roof.position.set(0, 1.8, 1);
-  roof.castShadow = true;
+  roof.castShadow = false;
   group.add(roof);
 
   // Truck bed
   const bedGeo = new THREE.BoxGeometry(2, 0.8, 2.5);
   const bed = new THREE.Mesh(bedGeo, bodyMat);
   bed.position.set(0, 0.8, -1);
-  bed.castShadow = true;
+  bed.castShadow = false;
   group.add(bed);
 
   // Bed walls
@@ -1077,7 +1295,7 @@ function createParkedTruck(color) {
     const wheel = new THREE.Mesh(wheelGeo, wheelMat);
     wheel.rotation.z = Math.PI / 2;
     wheel.position.set(pos.x, 0.45, pos.z);
-    wheel.castShadow = true;
+    wheel.castShadow = false;
     group.add(wheel);
   });
 
@@ -1114,14 +1332,14 @@ function createParkedSportsCar(color) {
   const hood = new THREE.Mesh(hoodGeo, bodyMat);
   hood.position.set(0, 0.5, 1.2);
   hood.rotation.x = -0.1;
-  hood.castShadow = true;
+  hood.castShadow = false;
   group.add(hood);
 
   // Low cabin
   const cabGeo = new THREE.BoxGeometry(1.6, 0.45, 1.5);
   const cab = new THREE.Mesh(cabGeo, bodyMat);
   cab.position.set(0, 0.85, -0.3);
-  cab.castShadow = true;
+  cab.castShadow = false;
   group.add(cab);
 
   // Windshield (very angled)
@@ -1154,7 +1372,7 @@ function createParkedSportsCar(color) {
     const wheel = new THREE.Mesh(wheelGeo, wheelMat);
     wheel.rotation.z = Math.PI / 2;
     wheel.position.set(pos.x, 0.3, pos.z);
-    wheel.castShadow = true;
+    wheel.castShadow = false;
     group.add(wheel);
   });
 
@@ -1807,7 +2025,7 @@ function createHealthPackMesh() {
   const boxMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
   const box = new THREE.Mesh(boxGeo, boxMat);
   box.position.y = 0.5;
-  box.castShadow = true;
+  box.castShadow = false;
   group.add(box);
 
   // Red cross - horizontal bar
@@ -1852,7 +2070,7 @@ function createAmmoBoxMesh() {
   const boxMat = new THREE.MeshStandardMaterial({ color: 0x4a3728 });
   const box = new THREE.Mesh(boxGeo, boxMat);
   box.position.y = 0.4;
-  box.castShadow = true;
+  box.castShadow = false;
   group.add(box);
 
   // Metal bands
@@ -2212,10 +2430,11 @@ scene.fog = new THREE.Fog(0x88aabb, 50, 400);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.y = PLAYER_HEIGHT;
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // Limit pixel ratio for performance
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap; // Faster than PCFSoftShadowMap
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 document.body.appendChild(renderer.domElement);
@@ -2260,14 +2479,14 @@ scene.add(ambientLight);
 const directionalLight = new THREE.DirectionalLight(0xffffee, 1.0);
 directionalLight.position.set(50, 100, 50);
 directionalLight.castShadow = true;
-directionalLight.shadow.mapSize.width = 2048;
-directionalLight.shadow.mapSize.height = 2048;
-directionalLight.shadow.camera.near = 0.5;
-directionalLight.shadow.camera.far = 500;
-directionalLight.shadow.camera.left = -100;
-directionalLight.shadow.camera.right = 100;
-directionalLight.shadow.camera.top = 100;
-directionalLight.shadow.camera.bottom = -100;
+directionalLight.shadow.mapSize.width = 1024;  // Reduced from 2048
+directionalLight.shadow.mapSize.height = 1024;
+directionalLight.shadow.camera.near = 1;
+directionalLight.shadow.camera.far = 200;  // Reduced from 500
+directionalLight.shadow.camera.left = -60;  // Reduced from 100
+directionalLight.shadow.camera.right = 60;
+directionalLight.shadow.camera.top = 60;
+directionalLight.shadow.camera.bottom = -60;
 scene.add(directionalLight);
 
 // Hemisphere light for more natural outdoor lighting
@@ -2279,9 +2498,7 @@ scene.add(hemiLight);
 // Create flashlight as a SpotLight attached to camera
 const flashlight = new THREE.SpotLight(0xffffee, 0, 80, Math.PI / 8, 0.4, 1.5);
 flashlight.position.set(0, 0, 0);
-flashlight.castShadow = true;
-flashlight.shadow.mapSize.width = 512;
-flashlight.shadow.mapSize.height = 512;
+flashlight.castShadow = false; // Disabled for performance
 
 // Create a target object for the flashlight to point at
 const flashlightTarget = new THREE.Object3D();
@@ -2435,9 +2652,36 @@ function updateTimeDisplay() {
 
 // ==================== INFINITE TERRAIN SYSTEM ====================
 const CHUNK_SIZE = 64;
-const RENDER_DISTANCE = 3; // chunks in each direction
+const RENDER_DISTANCE = 2; // chunks in each direction (reduced from 3 for performance)
 const chunks = {};
 const collidableObjects = [];
+
+// Shared geometries for performance (created once, reused across all chunks)
+const sharedGroundGeometry = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE);
+const sharedStreetHGeometry = new THREE.PlaneGeometry(CHUNK_SIZE, 8); // streetWidth = 8
+const sharedStreetVGeometry = new THREE.PlaneGeometry(8, CHUNK_SIZE);
+const sharedLineHGeometry = new THREE.PlaneGeometry(CHUNK_SIZE, 0.2);
+const sharedLineVGeometry = new THREE.PlaneGeometry(0.2, CHUNK_SIZE);
+const sharedSidewalkHGeometry = new THREE.PlaneGeometry(CHUNK_SIZE, 1.5); // sidewalkWidth = 1.5
+const sharedSidewalkVGeometry = new THREE.PlaneGeometry(1.5, CHUNK_SIZE);
+
+// Shared materials for performance (using Lambert for speed)
+const sharedStreetMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
+const sharedLineMaterial = new THREE.MeshLambertMaterial({ color: 0xcccc00 });
+const sharedSidewalkMaterial = new THREE.MeshLambertMaterial({ color: 0x777777 });
+
+// Shared geometries and materials for instanced objects
+const sharedTreeTrunkGeometry = new THREE.CylinderGeometry(0.3, 0.4, 2.5, 6); // Simplified, fewer segments
+const sharedTreeFoliageGeometry = new THREE.ConeGeometry(2.5, 5, 6); // Simplified
+const sharedRockGeometry = new THREE.DodecahedronGeometry(1, 0);
+const sharedLightPoleGeometry = new THREE.CylinderGeometry(0.15, 0.2, 6, 6);
+const sharedLightBulbGeometry = new THREE.SphereGeometry(0.3, 6, 6);
+
+const sharedTreeTrunkMaterial = new THREE.MeshLambertMaterial({ color: 0x4a3728 });
+const sharedTreeFoliageMaterial = new THREE.MeshLambertMaterial({ color: 0x228b22 });
+const sharedRockMaterial = new THREE.MeshLambertMaterial({ color: 0x696969 });
+const sharedLightPoleMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
+const sharedLightBulbMaterial = new THREE.MeshBasicMaterial({ color: 0xffffaa }); // Basic for emissive look
 
 // Seeded random for consistent terrain generation
 function seededRandom(seed) {
@@ -2449,11 +2693,9 @@ function getChunkSeed(cx, cz) {
   return cx * 73856093 ^ cz * 19349663;
 }
 
-// Ground material (shared)
-const groundMaterial = new THREE.MeshStandardMaterial({
-  color: 0x3d7c40,
-  roughness: 0.9,
-  metalness: 0.0
+// Ground material (shared, using Lambert for performance)
+const groundMaterial = new THREE.MeshLambertMaterial({
+  color: 0x3d7c40
 });
 
 // Building colors
@@ -2461,7 +2703,7 @@ const BUILDING_COLORS = [0x808080, 0x606060, 0x707070, 0x505050, 0x909090, 0x555
 
 // Streetlight system
 const streetlights = [];
-const STREETLIGHT_SPACING = 20; // Distance between streetlights
+const STREETLIGHT_SPACING = 32; // Distance between streetlights (increased for performance)
 
 function createStreetlight(x, z) {
   const group = new THREE.Group();
@@ -2471,7 +2713,7 @@ function createStreetlight(x, z) {
   const poleMat = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.8, roughness: 0.3 });
   const pole = new THREE.Mesh(poleGeo, poleMat);
   pole.position.y = 3;
-  pole.castShadow = true;
+  pole.castShadow = false;
   group.add(pole);
 
   // Arm (horizontal part)
@@ -2560,7 +2802,7 @@ function createDoor(x, z, rotation, buildingGroup) {
   const doorMesh = new THREE.Mesh(doorGeo, doorMat);
   doorMesh.position.x = 0.95; // Offset so it rotates from edge
   doorMesh.position.y = 1.45;
-  doorMesh.castShadow = true;
+  doorMesh.castShadow = false;
   pivot.add(doorMesh);
 
   // Door handle
@@ -2657,7 +2899,7 @@ function createLootCrate(x, y, z, seed) {
   const crateGeo = new THREE.BoxGeometry(1, 0.8, 0.8);
   const crateMat = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
   const crate = new THREE.Mesh(crateGeo, crateMat);
-  crate.castShadow = true;
+  crate.castShadow = false;
   group.add(crate);
 
   // Crate lid lines
@@ -2817,7 +3059,7 @@ function createBuildingWithInterior(x, z, width, height, depth, color, seed, chu
   const roofMat = new THREE.MeshStandardMaterial({ color: 0x3a3a3a });
   const roof = new THREE.Mesh(roofGeo, roofMat);
   roof.position.y = height;
-  roof.castShadow = true;
+  roof.castShadow = false;
   roof.receiveShadow = true;
   group.add(roof);
 
@@ -2879,117 +3121,116 @@ function createChunk(cx, cz) {
   const worldX = cx * CHUNK_SIZE;
   const worldZ = cz * CHUNK_SIZE;
 
-  // Create ground plane for this chunk
-  const groundGeometry = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE);
-  const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+  // Create ground plane for this chunk (using shared geometry)
+  const ground = new THREE.Mesh(sharedGroundGeometry, groundMaterial);
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(worldX + CHUNK_SIZE / 2, 0, worldZ + CHUNK_SIZE / 2);
   ground.receiveShadow = true;
   chunk.add(ground);
   chunk.userData.objects.push(ground);
 
-  // Add grid lines for this chunk
-  const gridHelper = new THREE.GridHelper(CHUNK_SIZE, 8, 0x2d6c30, 0x2d6c30);
-  gridHelper.position.set(worldX + CHUNK_SIZE / 2, 0.01, worldZ + CHUNK_SIZE / 2);
-  gridHelper.material.opacity = 0.1;
-  gridHelper.material.transparent = true;
-  chunk.add(gridHelper);
+  // Skip grid helper for performance (commented out)
+  // const gridHelper = new THREE.GridHelper(CHUNK_SIZE, 8, 0x2d6c30, 0x2d6c30);
 
   // Street configuration
   const streetWidth = 8;
   const streetY = 0.05; // Slightly above ground to prevent z-fighting
-  const streetColor = 0x333333;
-  const lineColor = 0xcccc00;
 
-  // Horizontal street (runs along X axis through middle)
-  const hStreetGeo = new THREE.PlaneGeometry(CHUNK_SIZE, streetWidth);
-  const hStreetMat = new THREE.MeshStandardMaterial({ color: streetColor });
-  const hStreet = new THREE.Mesh(hStreetGeo, hStreetMat);
+  // Shared materials (reuse across streets)
+  const streetMat = sharedStreetMaterial;
+  const lineMat = sharedLineMaterial;
+  const sidewalkMat = sharedSidewalkMaterial;
+
+  // Horizontal street (using shared geometry)
+  const hStreet = new THREE.Mesh(sharedStreetHGeometry, streetMat);
   hStreet.rotation.x = -Math.PI / 2;
   hStreet.position.set(worldX + CHUNK_SIZE / 2, streetY, worldZ + CHUNK_SIZE / 2);
   hStreet.receiveShadow = true;
   chunk.add(hStreet);
 
-  // Vertical street (runs along Z axis through middle)
-  const vStreetGeo = new THREE.PlaneGeometry(streetWidth, CHUNK_SIZE);
-  const vStreetMat = new THREE.MeshStandardMaterial({ color: streetColor });
-  const vStreet = new THREE.Mesh(vStreetGeo, vStreetMat);
+  // Vertical street (using shared geometry)
+  const vStreet = new THREE.Mesh(sharedStreetVGeometry, streetMat);
   vStreet.rotation.x = -Math.PI / 2;
   vStreet.position.set(worldX + CHUNK_SIZE / 2, streetY, worldZ + CHUNK_SIZE / 2);
   vStreet.receiveShadow = true;
   chunk.add(vStreet);
 
-  // Center line for horizontal street (yellow dashed)
-  const hLineGeo = new THREE.PlaneGeometry(CHUNK_SIZE, 0.2);
-  const hLineMat = new THREE.MeshStandardMaterial({ color: lineColor });
-  const hLine = new THREE.Mesh(hLineGeo, hLineMat);
+  // Center line for horizontal street (using shared geometry)
+  const hLine = new THREE.Mesh(sharedLineHGeometry, lineMat);
   hLine.rotation.x = -Math.PI / 2;
   hLine.position.set(worldX + CHUNK_SIZE / 2, streetY + 0.01, worldZ + CHUNK_SIZE / 2);
   chunk.add(hLine);
 
-  // Center line for vertical street
-  const vLineGeo = new THREE.PlaneGeometry(0.2, CHUNK_SIZE);
-  const vLineMat = new THREE.MeshStandardMaterial({ color: lineColor });
-  const vLine = new THREE.Mesh(vLineGeo, vLineMat);
+  // Center line for vertical street (using shared geometry)
+  const vLine = new THREE.Mesh(sharedLineVGeometry, lineMat);
   vLine.rotation.x = -Math.PI / 2;
   vLine.position.set(worldX + CHUNK_SIZE / 2, streetY + 0.01, worldZ + CHUNK_SIZE / 2);
   chunk.add(vLine);
 
-  // Sidewalks along streets
+  // Sidewalks along streets (using shared geometry)
   const sidewalkWidth = 1.5;
-  const sidewalkColor = 0x777777;
-  const sidewalkMat = new THREE.MeshStandardMaterial({ color: sidewalkColor });
 
   // Sidewalks for horizontal street
-  const hSidewalk1Geo = new THREE.PlaneGeometry(CHUNK_SIZE, sidewalkWidth);
-  const hSidewalk1 = new THREE.Mesh(hSidewalk1Geo, sidewalkMat);
+  const hSidewalk1 = new THREE.Mesh(sharedSidewalkHGeometry, sidewalkMat);
   hSidewalk1.rotation.x = -Math.PI / 2;
   hSidewalk1.position.set(worldX + CHUNK_SIZE / 2, streetY + 0.02, worldZ + CHUNK_SIZE / 2 - streetWidth / 2 - sidewalkWidth / 2);
   chunk.add(hSidewalk1);
 
-  const hSidewalk2 = new THREE.Mesh(hSidewalk1Geo, sidewalkMat);
+  const hSidewalk2 = new THREE.Mesh(sharedSidewalkHGeometry, sidewalkMat);
   hSidewalk2.rotation.x = -Math.PI / 2;
   hSidewalk2.position.set(worldX + CHUNK_SIZE / 2, streetY + 0.02, worldZ + CHUNK_SIZE / 2 + streetWidth / 2 + sidewalkWidth / 2);
   chunk.add(hSidewalk2);
 
-  // Sidewalks for vertical street
-  const vSidewalk1Geo = new THREE.PlaneGeometry(sidewalkWidth, CHUNK_SIZE);
-  const vSidewalk1 = new THREE.Mesh(vSidewalk1Geo, sidewalkMat);
+  // Sidewalks for vertical street (using shared geometry)
+  const vSidewalk1 = new THREE.Mesh(sharedSidewalkVGeometry, sidewalkMat);
   vSidewalk1.rotation.x = -Math.PI / 2;
   vSidewalk1.position.set(worldX + CHUNK_SIZE / 2 - streetWidth / 2 - sidewalkWidth / 2, streetY + 0.02, worldZ + CHUNK_SIZE / 2);
   chunk.add(vSidewalk1);
 
-  const vSidewalk2 = new THREE.Mesh(vSidewalk1Geo, sidewalkMat);
+  const vSidewalk2 = new THREE.Mesh(sharedSidewalkVGeometry, sidewalkMat);
   vSidewalk2.rotation.x = -Math.PI / 2;
   vSidewalk2.position.set(worldX + CHUNK_SIZE / 2 + streetWidth / 2 + sidewalkWidth / 2, streetY + 0.02, worldZ + CHUNK_SIZE / 2);
   chunk.add(vSidewalk2);
 
-  // Add streetlights along the roads
-  const lightOffset = streetWidth / 2 + sidewalkWidth + 0.5; // Position on sidewalk edge
+  // Add streetlights using InstancedMesh (simplified for performance)
+  const lightOffset = streetWidth / 2 + sidewalkWidth + 0.5;
 
-  // Streetlights along horizontal street (north side, facing south)
+  // Count streetlights first
+  const lightPositions = [];
   for (let lx = STREETLIGHT_SPACING / 2; lx < CHUNK_SIZE; lx += STREETLIGHT_SPACING) {
-    // Skip the intersection area
     if (Math.abs(lx - CHUNK_SIZE / 2) < streetWidth / 2 + 2) continue;
-
-    const light1 = createStreetlight(worldX + lx, worldZ + CHUNK_SIZE / 2 - lightOffset);
-    light1.rotation.y = Math.PI; // Face toward street
-    chunk.add(light1);
+    lightPositions.push({ x: worldX + lx, z: worldZ + CHUNK_SIZE / 2 - lightOffset });
+  }
+  for (let lz = STREETLIGHT_SPACING / 2; lz < CHUNK_SIZE; lz += STREETLIGHT_SPACING) {
+    if (Math.abs(lz - CHUNK_SIZE / 2) < streetWidth / 2 + 2) continue;
+    lightPositions.push({ x: worldX + CHUNK_SIZE / 2 - lightOffset, z: worldZ + lz });
   }
 
-  // Streetlights along vertical street (west side, facing east)
-  for (let lz = STREETLIGHT_SPACING / 2; lz < CHUNK_SIZE; lz += STREETLIGHT_SPACING) {
-    // Skip the intersection area
-    if (Math.abs(lz - CHUNK_SIZE / 2) < streetWidth / 2 + 2) continue;
+  if (lightPositions.length > 0) {
+    const poleInstances = new THREE.InstancedMesh(sharedLightPoleGeometry, sharedLightPoleMaterial, lightPositions.length);
+    const bulbInstances = new THREE.InstancedMesh(sharedLightBulbGeometry, sharedLightBulbMaterial, lightPositions.length);
 
-    const light2 = createStreetlight(worldX + CHUNK_SIZE / 2 - lightOffset, worldZ + lz);
-    light2.rotation.y = Math.PI / 2; // Face toward street
-    chunk.add(light2);
+    const tempMatrix = new THREE.Matrix4();
+
+    for (let i = 0; i < lightPositions.length; i++) {
+      const pos = lightPositions[i];
+      // Pole
+      tempMatrix.makeTranslation(pos.x, 3, pos.z);
+      poleInstances.setMatrixAt(i, tempMatrix);
+      // Bulb at top
+      tempMatrix.makeTranslation(pos.x, 6, pos.z);
+      bulbInstances.setMatrixAt(i, tempMatrix);
+    }
+
+    poleInstances.instanceMatrix.needsUpdate = true;
+    bulbInstances.instanceMatrix.needsUpdate = true;
+    chunk.add(poleInstances);
+    chunk.add(bulbInstances);
   }
 
   // Add parked cars along streets
   const parkingOffset = streetWidth / 2 - 1.5; // Park on the edge of street
-  const carSpacing = 8; // Space between potential car spots
+  const carSpacing = 16; // Space between potential car spots (increased for performance)
   const carTypes = ['sedan', 'sedan', 'sedan', 'truck', 'sports']; // Weighted distribution
 
   // Parked cars along horizontal street
@@ -2999,8 +3240,8 @@ function createChunk(cx, cz) {
 
     const carSeed = seed + 5000 + Math.floor(px);
 
-    // 40% chance for a car on each side
-    if (seededRandom(carSeed) < 0.4) {
+    // 20% chance for a car on each side (reduced from 40% for performance)
+    if (seededRandom(carSeed) < 0.2) {
       const carType = carTypes[Math.floor(seededRandom(carSeed + 1) * carTypes.length)];
       const carX = worldX + px;
       const carZ = worldZ + CHUNK_SIZE / 2 - parkingOffset;
@@ -3010,7 +3251,7 @@ function createChunk(cx, cz) {
       collidableObjects.push(car);
     }
 
-    if (seededRandom(carSeed + 10) < 0.4) {
+    if (seededRandom(carSeed + 10) < 0.2) {
       const carType = carTypes[Math.floor(seededRandom(carSeed + 11) * carTypes.length)];
       const carX = worldX + px;
       const carZ = worldZ + CHUNK_SIZE / 2 + parkingOffset;
@@ -3028,8 +3269,8 @@ function createChunk(cx, cz) {
 
     const carSeed = seed + 6000 + Math.floor(pz);
 
-    // 40% chance for a car on each side
-    if (seededRandom(carSeed) < 0.4) {
+    // 20% chance for a car on each side (reduced from 40% for performance)
+    if (seededRandom(carSeed) < 0.2) {
       const carType = carTypes[Math.floor(seededRandom(carSeed + 1) * carTypes.length)];
       const carX = worldX + CHUNK_SIZE / 2 - parkingOffset;
       const carZ = worldZ + pz;
@@ -3039,7 +3280,7 @@ function createChunk(cx, cz) {
       collidableObjects.push(car);
     }
 
-    if (seededRandom(carSeed + 10) < 0.4) {
+    if (seededRandom(carSeed + 10) < 0.2) {
       const carType = carTypes[Math.floor(seededRandom(carSeed + 11) * carTypes.length)];
       const carX = worldX + CHUNK_SIZE / 2 + parkingOffset;
       const carZ = worldZ + pz;
@@ -3092,46 +3333,69 @@ function createChunk(cx, cz) {
     collidableObjects.push(building);
   }
 
-  // Add some trees
+  // Add trees using InstancedMesh (much faster than individual meshes)
   const numTrees = Math.floor(seededRandom(seed + 500) * 5) + 2;
-  for (let i = 0; i < numTrees; i++) {
-    const tSeed = seed + 2000 + i * 100;
-    const tx = worldX + 4 + seededRandom(tSeed) * (CHUNK_SIZE - 8);
-    const tz = worldZ + 4 + seededRandom(tSeed + 1) * (CHUNK_SIZE - 8);
-    const treeHeight = 4 + seededRandom(tSeed + 2) * 4;
 
-    // Tree trunk
-    const trunkGeo = new THREE.CylinderGeometry(0.3, 0.4, treeHeight * 0.4, 8);
-    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3728 });
-    const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-    trunk.position.set(tx, treeHeight * 0.2, tz);
-    trunk.castShadow = true;
-    chunk.add(trunk);
+  if (numTrees > 0) {
+    const treeTrunkInstances = new THREE.InstancedMesh(sharedTreeTrunkGeometry, sharedTreeTrunkMaterial, numTrees);
+    const treeFoliageInstances = new THREE.InstancedMesh(sharedTreeFoliageGeometry, sharedTreeFoliageMaterial, numTrees);
+    treeTrunkInstances.castShadow = true;
+    treeFoliageInstances.castShadow = false;
 
-    // Tree foliage
-    const foliageGeo = new THREE.ConeGeometry(2 + seededRandom(tSeed + 3), treeHeight * 0.7, 8);
-    const foliageMat = new THREE.MeshStandardMaterial({ color: 0x228b22 });
-    const foliage = new THREE.Mesh(foliageGeo, foliageMat);
-    foliage.position.set(tx, treeHeight * 0.6, tz);
-    foliage.castShadow = true;
-    chunk.add(foliage);
+    const tempMatrix = new THREE.Matrix4();
+
+    for (let i = 0; i < numTrees; i++) {
+      const tSeed = seed + 2000 + i * 100;
+      const tx = worldX + 4 + seededRandom(tSeed) * (CHUNK_SIZE - 8);
+      const tz = worldZ + 4 + seededRandom(tSeed + 1) * (CHUNK_SIZE - 8);
+      const scale = 0.8 + seededRandom(tSeed + 2) * 0.6; // Vary size slightly
+
+      // Trunk instance
+      tempMatrix.makeScale(scale, scale, scale);
+      tempMatrix.setPosition(tx, 1.25 * scale, tz);
+      treeTrunkInstances.setMatrixAt(i, tempMatrix);
+
+      // Foliage instance
+      tempMatrix.makeScale(scale, scale, scale);
+      tempMatrix.setPosition(tx, 4 * scale, tz);
+      treeFoliageInstances.setMatrixAt(i, tempMatrix);
+    }
+
+    treeTrunkInstances.instanceMatrix.needsUpdate = true;
+    treeFoliageInstances.instanceMatrix.needsUpdate = true;
+    chunk.add(treeTrunkInstances);
+    chunk.add(treeFoliageInstances);
   }
 
-  // Add some rocks
+  // Add rocks using InstancedMesh
   const numRocks = Math.floor(seededRandom(seed + 800) * 4);
-  for (let i = 0; i < numRocks; i++) {
-    const rSeed = seed + 3000 + i * 100;
-    const rx = worldX + 2 + seededRandom(rSeed) * (CHUNK_SIZE - 4);
-    const rz = worldZ + 2 + seededRandom(rSeed + 1) * (CHUNK_SIZE - 4);
-    const rockSize = 0.5 + seededRandom(rSeed + 2) * 1.5;
 
-    const rockGeo = new THREE.DodecahedronGeometry(rockSize, 0);
-    const rockMat = new THREE.MeshStandardMaterial({ color: 0x696969, roughness: 1 });
-    const rock = new THREE.Mesh(rockGeo, rockMat);
-    rock.position.set(rx, rockSize * 0.5, rz);
-    rock.rotation.set(seededRandom(rSeed + 3) * Math.PI, seededRandom(rSeed + 4) * Math.PI, 0);
-    rock.castShadow = true;
-    chunk.add(rock);
+  if (numRocks > 0) {
+    const rockInstances = new THREE.InstancedMesh(sharedRockGeometry, sharedRockMaterial, numRocks);
+    rockInstances.castShadow = false;
+
+    const tempMatrix = new THREE.Matrix4();
+    const tempRotation = new THREE.Euler();
+    const tempQuaternion = new THREE.Quaternion();
+
+    for (let i = 0; i < numRocks; i++) {
+      const rSeed = seed + 3000 + i * 100;
+      const rx = worldX + 2 + seededRandom(rSeed) * (CHUNK_SIZE - 4);
+      const rz = worldZ + 2 + seededRandom(rSeed + 1) * (CHUNK_SIZE - 4);
+      const rockScale = 0.5 + seededRandom(rSeed + 2) * 1.0;
+
+      tempRotation.set(seededRandom(rSeed + 3) * Math.PI, seededRandom(rSeed + 4) * Math.PI, 0);
+      tempQuaternion.setFromEuler(tempRotation);
+      tempMatrix.compose(
+        new THREE.Vector3(rx, rockScale * 0.5, rz),
+        tempQuaternion,
+        new THREE.Vector3(rockScale, rockScale, rockScale)
+      );
+      rockInstances.setMatrixAt(i, tempMatrix);
+    }
+
+    rockInstances.instanceMatrix.needsUpdate = true;
+    chunk.add(rockInstances);
   }
 
   scene.add(chunk);
@@ -3361,7 +3625,7 @@ function createEnemyMesh(type) {
   const headMaterial = new THREE.MeshStandardMaterial({ color: 0xffccaa });
   const head = new THREE.Mesh(headGeometry, headMaterial);
   head.position.y = 1.8;
-  head.castShadow = true;
+  head.castShadow = false;
   group.add(head);
 
   // Arms
@@ -3370,12 +3634,12 @@ function createEnemyMesh(type) {
 
   const leftArm = new THREE.Mesh(armGeometry, armMaterial);
   leftArm.position.set(-0.65, 0.75, 0);
-  leftArm.castShadow = true;
+  leftArm.castShadow = false;
   group.add(leftArm);
 
   const rightArm = new THREE.Mesh(armGeometry, armMaterial);
   rightArm.position.set(0.65, 0.75, 0);
-  rightArm.castShadow = true;
+  rightArm.castShadow = false;
   group.add(rightArm);
 
   // Legs
@@ -3384,12 +3648,12 @@ function createEnemyMesh(type) {
 
   const leftLeg = new THREE.Mesh(legGeometry, legMaterial);
   leftLeg.position.set(-0.25, -0.4, 0);
-  leftLeg.castShadow = true;
+  leftLeg.castShadow = false;
   group.add(leftLeg);
 
   const rightLeg = new THREE.Mesh(legGeometry, legMaterial);
   rightLeg.position.set(0.25, -0.4, 0);
-  rightLeg.castShadow = true;
+  rightLeg.castShadow = false;
   group.add(rightLeg);
 
   // Gun (simple)
@@ -3453,7 +3717,7 @@ function createTankBossMesh() {
   const turretGeo = new THREE.CylinderGeometry(1, 1.2, 1, 8);
   const turret = new THREE.Mesh(turretGeo, metalMat);
   turret.position.y = 3;
-  turret.castShadow = true;
+  turret.castShadow = false;
   group.add(turret);
 
   // Main cannon
@@ -3461,7 +3725,7 @@ function createTankBossMesh() {
   const cannon = new THREE.Mesh(cannonGeo, darkMat);
   cannon.rotation.x = Math.PI / 2;
   cannon.position.set(0, 3, -2);
-  cannon.castShadow = true;
+  cannon.castShadow = false;
   group.add(cannon);
 
   // Armor plates
@@ -3469,7 +3733,7 @@ function createTankBossMesh() {
   [-1.6, 1.6].forEach(x => {
     const plate = new THREE.Mesh(plateGeo, darkMat);
     plate.position.set(x, 1.5, 0);
-    plate.castShadow = true;
+    plate.castShadow = false;
     group.add(plate);
   });
 
@@ -3518,14 +3782,14 @@ function createMechBossMesh() {
   const torsoGeo = new THREE.BoxGeometry(2, 2.5, 1.5);
   const torso = new THREE.Mesh(torsoGeo, metalMat);
   torso.position.y = 3;
-  torso.castShadow = true;
+  torso.castShadow = false;
   group.add(torso);
 
   // Head/cockpit
   const headGeo = new THREE.BoxGeometry(1.2, 0.8, 1);
   const head = new THREE.Mesh(headGeo, metalMat);
   head.position.y = 4.6;
-  head.castShadow = true;
+  head.castShadow = false;
   group.add(head);
 
   // Visor
@@ -3540,7 +3804,7 @@ function createMechBossMesh() {
   [-1.5, 1.5].forEach(x => {
     const arm = new THREE.Mesh(armGeo, metalMat);
     arm.position.set(x, 3, 0);
-    arm.castShadow = true;
+    arm.castShadow = false;
     group.add(arm);
 
     // Weapon pods
@@ -3556,7 +3820,7 @@ function createMechBossMesh() {
   [-0.7, 0.7].forEach(x => {
     const leg = new THREE.Mesh(legGeo, metalMat);
     leg.position.set(x, 1, 0);
-    leg.castShadow = true;
+    leg.castShadow = false;
     group.add(leg);
   });
 
@@ -3613,7 +3877,7 @@ function createSkyBossMesh() {
   const wingGeo = new THREE.BoxGeometry(5, 0.1, 1.5);
   const wing = new THREE.Mesh(wingGeo, metalMat);
   wing.position.set(0, 0, 0.5);
-  wing.castShadow = true;
+  wing.castShadow = false;
   group.add(wing);
 
   // Tail fins
@@ -3776,7 +4040,7 @@ function createBulletTrail(start, end) {
 const raycaster = new THREE.Raycaster();
 
 function shoot() {
-  const weapon = WEAPONS[state.currentWeapon];
+  const weapon = getEffectiveWeaponStats(state.currentWeapon);
 
   if (!state.canShoot || state.isReloading || state.ammoInMag <= 0) {
     if (state.ammoInMag <= 0 && !state.isReloading) {
@@ -3793,13 +4057,14 @@ function shoot() {
   // Play weapon sound
   playSound(state.currentWeapon);
 
-  // Muzzle flash
-  muzzleFlashMaterial.opacity = 1;
+  // Muzzle flash (reduced by silencer)
+  muzzleFlashMaterial.opacity = weapon.muzzleFlashMult;
   setTimeout(() => { muzzleFlashMaterial.opacity = 0; }, 50);
 
-  // Weapon recoil
-  weaponGroup.position.z += 0.05;
-  weaponGroup.rotation.x -= 0.05;
+  // Weapon recoil (reduced by grip)
+  const recoilAmount = 0.05 * weapon.recoilMult;
+  weaponGroup.position.z += recoilAmount;
+  weaponGroup.rotation.x -= recoilAmount;
   setTimeout(() => {
     weaponGroup.position.z = -0.5;
     weaponGroup.rotation.x = 0;
@@ -3886,7 +4151,7 @@ function shoot() {
 }
 
 function reload() {
-  const weapon = WEAPONS[state.currentWeapon];
+  const weapon = getEffectiveWeaponStats(state.currentWeapon);
 
   if (state.isReloading || state.ammoReserve <= 0 || state.ammoInMag >= weapon.magSize) {
     return;
@@ -3921,7 +4186,7 @@ function switchWeapon(weaponType) {
   if (state.currentWeapon === weaponType || state.isReloading) return;
 
   state.currentWeapon = weaponType;
-  const weapon = WEAPONS[weaponType];
+  const weapon = getEffectiveWeaponStats(weaponType);
   state.ammoInMag = weapon.magSize;
   state.ammoReserve = weapon.maxAmmo;
 
@@ -4445,10 +4710,14 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
-  // Tab key for scoreboard (works anytime during gameplay)
+  // Tab key for inventory/scoreboard
   if (event.code === 'Tab') {
     event.preventDefault();
-    showScoreboard(true);
+    if (state.inventoryOpen) {
+      closeInventory();
+    } else if (state.isPlaying && !state.isPaused) {
+      openInventory();
+    }
     return;
   }
 
@@ -4526,9 +4795,8 @@ document.addEventListener('keydown', (event) => {
 });
 
 document.addEventListener('keyup', (event) => {
-  // Hide scoreboard when Tab released
+  // Tab is now used for inventory toggle (no keyup action needed)
   if (event.code === 'Tab') {
-    showScoreboard(false);
     return;
   }
 
@@ -4607,7 +4875,7 @@ socket.on('players', (players) => {
       const geometry = new THREE.BoxGeometry(1, 2, 1);
       const material = new THREE.MeshStandardMaterial({ color: teamColor });
       const mesh = new THREE.Mesh(geometry, material);
-      mesh.castShadow = true;
+      mesh.castShadow = false;
 
       // Add name label
       const nameLabel = createPlayerLabel(playerData.name, playerData.team);
@@ -4845,6 +5113,8 @@ socket.on('enemyDeath', (data) => {
   // Track kill if we killed this enemy
   if (data.killerId === socket.id) {
     state.kills++;
+    // Track weapon kill for attachments
+    trackWeaponKill(state.currentWeapon);
   }
 
   // Create death effect
@@ -5486,6 +5756,19 @@ window.addEventListener('resize', () => {
 
 const clock = new THREE.Clock();
 
+// Cached DOM elements for game loop performance
+const cachedVehiclePrompt = document.getElementById('vehicle-prompt');
+const cachedLootPrompt = document.getElementById('loot-prompt');
+const cachedDoorPrompt = document.getElementById('door-prompt');
+
+// Throttling and cached proximity results
+let proximityCheckFrame = 0;
+let minimapFrame = 0;
+let portalFrame = 0;
+let cachedNearVehicle = null;
+let cachedNearLoot = null;
+let cachedNearDoor = null;
+
 function animate() {
   requestAnimationFrame(animate);
 
@@ -5602,49 +5885,52 @@ function animate() {
   // Update day/night cycle
   updateDayNightCycle(delta);
 
-  // Show/hide vehicle prompt when near a vehicle
-  const vehiclePrompt = document.getElementById('vehicle-prompt');
-  if (vehiclePrompt && state.isPlaying && !state.isPaused && !state.inVehicle) {
-    const nearVehicle = getNearestVehicle(camera.position);
-    if (nearVehicle) {
-      const vehicleTypeName = nearVehicle.type === 'aircraft' ? 'aircraft' :
-                              nearVehicle.type === 'motorcycle' ? 'motorcycle' : 'vehicle';
-      vehiclePrompt.innerHTML = `Press <span>E</span> to enter ${vehicleTypeName}`;
+  // Throttle proximity checks - only run every 5 frames
+  proximityCheckFrame = (proximityCheckFrame + 1) % 5;
+  if (proximityCheckFrame === 0) {
+    // Show/hide vehicle prompt when near a vehicle
+    if (cachedVehiclePrompt && state.isPlaying && !state.isPaused && !state.inVehicle) {
+      cachedNearVehicle = getNearestVehicle(camera.position);
+      if (cachedNearVehicle) {
+        const vehicleTypeName = cachedNearVehicle.type === 'aircraft' ? 'aircraft' :
+                                cachedNearVehicle.type === 'motorcycle' ? 'motorcycle' : 'vehicle';
+        cachedVehiclePrompt.innerHTML = `Press <span>E</span> to enter ${vehicleTypeName}`;
+      }
+      cachedVehiclePrompt.classList.toggle('visible', cachedNearVehicle !== null);
+    } else if (cachedVehiclePrompt) {
+      cachedVehiclePrompt.classList.remove('visible');
     }
-    vehiclePrompt.classList.toggle('visible', nearVehicle !== null);
-  } else if (vehiclePrompt) {
-    vehiclePrompt.classList.remove('visible');
-  }
 
-  // Show/hide loot prompt when near a crate
-  const lootPrompt = document.getElementById('loot-prompt');
-  if (lootPrompt && state.isPlaying && !state.isPaused && !state.inVehicle) {
-    const nearLoot = getNearestLootContainer(camera.position);
-    lootPrompt.classList.toggle('visible', nearLoot !== null);
-  } else if (lootPrompt) {
-    lootPrompt.classList.remove('visible');
-  }
-
-  // Show/hide door prompt when near a door
-  const doorPrompt = document.getElementById('door-prompt');
-  if (doorPrompt && state.isPlaying && !state.isPaused && !state.inVehicle) {
-    const nearDoor = getNearestDoor(camera.position);
-    if (nearDoor) {
-      doorPrompt.textContent = nearDoor.isOpen ? 'Press E to close door' : 'Press E to open door';
-      doorPrompt.innerHTML = nearDoor.isOpen ?
-        'Press <span>E</span> to close door' :
-        'Press <span>E</span> to open door';
+    // Show/hide loot prompt when near a crate
+    if (cachedLootPrompt && state.isPlaying && !state.isPaused && !state.inVehicle) {
+      cachedNearLoot = getNearestLootContainer(camera.position);
+      cachedLootPrompt.classList.toggle('visible', cachedNearLoot !== null);
+    } else if (cachedLootPrompt) {
+      cachedLootPrompt.classList.remove('visible');
     }
-    doorPrompt.classList.toggle('visible', nearDoor !== null);
-  } else if (doorPrompt) {
-    doorPrompt.classList.remove('visible');
+
+    // Show/hide door prompt when near a door
+    if (cachedDoorPrompt && state.isPlaying && !state.isPaused && !state.inVehicle) {
+      cachedNearDoor = getNearestDoor(camera.position);
+      if (cachedNearDoor) {
+        cachedDoorPrompt.innerHTML = cachedNearDoor.isOpen ?
+          'Press <span>E</span> to close door' :
+          'Press <span>E</span> to open door';
+      }
+      cachedDoorPrompt.classList.toggle('visible', cachedNearDoor !== null);
+    } else if (cachedDoorPrompt) {
+      cachedDoorPrompt.classList.remove('visible');
+    }
   }
 
   // Apply screen shake
   updateScreenShake(camera);
 
-  // Update minimap
-  updateMinimap();
+  // Throttle minimap update - every 2 frames
+  minimapFrame = (minimapFrame + 1) % 2;
+  if (minimapFrame === 0) {
+    updateMinimap();
+  }
 
   // Update pickups (animation and collection)
   updatePickups();
@@ -5655,8 +5941,11 @@ function animate() {
   // Update doors (animation)
   updateDoors(delta);
 
-  // Update portal (distance indicator and victory check)
-  updatePortal();
+  // Throttle portal update - every 3 frames
+  portalFrame = (portalFrame + 1) % 3;
+  if (portalFrame === 0) {
+    updatePortal();
+  }
 
   renderer.render(scene, camera);
 }
@@ -5665,6 +5954,9 @@ function animate() {
 updateHealth();
 updateAmmoDisplay();
 updateWeaponDisplay();
+
+// Load saved attachment data from localStorage
+loadAttachmentData();
 
 // Load saved server address from localStorage
 const savedServerAddress = localStorage.getItem('combatServerAddress');

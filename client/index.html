@@ -1175,6 +1175,120 @@
     #flashlight-indicator.hidden {
       display: none;
     }
+
+    /* Inventory Screen */
+    #inventory-screen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      pointer-events: auto;
+    }
+    #inventory-screen.hidden {
+      display: none;
+    }
+    .inventory-container {
+      background: rgba(30, 30, 30, 0.95);
+      border: 2px solid #444;
+      border-radius: 10px;
+      padding: 30px;
+      max-width: 800px;
+      width: 90%;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    .inventory-container h2 {
+      text-align: center;
+      color: #f39c12;
+      margin-bottom: 10px;
+      letter-spacing: 3px;
+    }
+    .inventory-close {
+      text-align: center;
+      color: #666;
+      font-size: 12px;
+      margin-bottom: 20px;
+    }
+    #weapon-slots-inventory {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+    .weapon-slot-inv {
+      background: rgba(50, 50, 50, 0.8);
+      border: 1px solid #555;
+      border-radius: 8px;
+      padding: 15px;
+    }
+    .weapon-slot-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      color: #fff;
+    }
+    .weapon-slot-header strong {
+      color: #f39c12;
+    }
+    .kill-count {
+      color: #888;
+      font-size: 14px;
+    }
+    .attachments-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .attachment-item {
+      display: inline-block;
+      padding: 8px 12px;
+      border: 1px solid #666;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 13px;
+      color: #fff;
+      background: rgba(60, 60, 60, 0.8);
+      transition: all 0.2s;
+    }
+    .attachment-item:hover:not(.locked) {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: #888;
+    }
+    .attachment-item.locked {
+      opacity: 0.4;
+      cursor: not-allowed;
+      color: #888;
+    }
+    .attachment-item.equipped {
+      border-color: #4CAF50;
+      background: rgba(76, 175, 80, 0.3);
+      color: #4CAF50;
+    }
+
+    /* Attachment unlock notification */
+    #attachment-unlock {
+      position: fixed;
+      top: 20%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(76, 175, 80, 0.9);
+      color: white;
+      padding: 15px 30px;
+      border-radius: 8px;
+      font-size: 18px;
+      font-weight: bold;
+      z-index: 500;
+      pointer-events: none;
+      text-shadow: 1px 1px 2px black;
+    }
+    #attachment-unlock.hidden {
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -1364,8 +1478,20 @@
         <tbody id="scoreboard-body">
         </tbody>
       </table>
-      <p id="scoreboard-hint">Hold TAB to view</p>
+      <p id="scoreboard-hint">Press TAB for inventory</p>
     </div>
+
+    <!-- Inventory Screen -->
+    <div id="inventory-screen" class="hidden">
+      <div class="inventory-container">
+        <h2>WEAPON ATTACHMENTS</h2>
+        <div class="inventory-close">Press TAB to close</div>
+        <div id="weapon-slots"></div>
+      </div>
+    </div>
+
+    <!-- Attachment Unlock Notification -->
+    <div id="attachment-unlock" class="hidden"></div>
   </div>
   <script type="module" src="/src/main.js"></script>
 </body>
