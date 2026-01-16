@@ -299,6 +299,46 @@
       border-color: #f39c12;
     }
 
+    /* Server Address Input */
+    .server-input-section {
+      margin-bottom: 20px;
+    }
+    .server-input-section label {
+      display: block;
+      font-size: 14px;
+      color: #888;
+      margin-bottom: 8px;
+    }
+    #server-address {
+      width: 100%;
+      padding: 10px 15px;
+      font-size: 16px;
+      border: 2px solid #555;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.5);
+      color: white;
+      text-align: center;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    #server-address:focus {
+      border-color: #f39c12;
+    }
+    #connection-status {
+      margin-top: 8px;
+      font-size: 12px;
+      height: 16px;
+    }
+    #connection-status.connecting {
+      color: #f39c12;
+    }
+    #connection-status.connected {
+      color: #27ae60;
+    }
+    #connection-status.error {
+      color: #e74c3c;
+    }
+
     /* Team Selection */
     .team-section {
       margin-bottom: 25px;
@@ -1242,6 +1282,12 @@
       <div class="name-input-section">
         <label for="player-name">Your Name</label>
         <input type="text" id="player-name" maxlength="16" placeholder="Enter name..." value="Player">
+      </div>
+
+      <div class="server-input-section">
+        <label for="server-address">Server Address</label>
+        <input type="text" id="server-address" placeholder="localhost:3000" value="localhost:3000">
+        <div id="connection-status"></div>
       </div>
 
       <div class="team-section">

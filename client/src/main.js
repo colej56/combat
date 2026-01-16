@@ -3985,44 +3985,75 @@ const resumeBtn = document.getElementById('resume-btn');
 const quitBtn = document.getElementById('quit-btn');
 
 // Start game with selected difficulty
-function startGame(difficulty) {
+async function startGame(difficulty) {
   initAudio(); // Initialize audio on first user interaction
 
-  // Get player name and team from menu
-  const nameInput = document.getElementById('player-name');
-  state.playerName = nameInput.value.trim() || 'Player';
-  state.difficulty = difficulty;
-  state.gameState = 'playing';
-  state.isPlaying = true;
-  state.isPaused = false;
-  state.health = 100;
+  // Get server address from input
+  const serverInput = document.getElementById('server-address');
+  const connectionStatus = document.getElementById('connection-status');
+  const serverAddress = serverInput.value.trim() || 'localhost:3000';
 
-  // Reset weapons inventory
-  state.weapons = { pistol: true, rifle: false, shotgun: false, sniper: false };
-  state.currentWeapon = 'pistol';
-  updateWeaponSlots();
+  // Save to localStorage
+  localStorage.setItem('combatServerAddress', serverAddress);
 
-  // Reset game timer
-  gameStartTime = Date.now();
+  // Show connecting status
+  connectionStatus.textContent = 'Connecting...';
+  connectionStatus.className = 'connecting';
 
-  // Reset position
-  camera.position.set(0, PLAYER_HEIGHT, 0);
+  // Disable difficulty buttons while connecting
+  document.querySelectorAll('.difficulty-btn').forEach(btn => btn.disabled = true);
 
-  // Update UI
-  mainMenu.classList.add('hidden');
-  crosshair.classList.remove('hidden');
-  difficultyDisplay.textContent = `Difficulty: ${DIFFICULTY_SETTINGS[difficulty].label}`;
-  updateHealth();
+  try {
+    // Connect to server (only if not already connected)
+    if (!socket || !socket.connected) {
+      await connectToServer(serverAddress);
+    }
 
-  // Send player info to server
-  socket.emit('setPlayerInfo', {
-    name: state.playerName,
-    team: state.team,
-    difficulty: difficulty
-  });
+    connectionStatus.textContent = 'Connected!';
+    connectionStatus.className = 'connected';
 
-  // Lock pointer
-  renderer.domElement.requestPointerLock();
+    // Get player name and team from menu
+    const nameInput = document.getElementById('player-name');
+    state.playerName = nameInput.value.trim() || 'Player';
+    state.difficulty = difficulty;
+    state.gameState = 'playing';
+    state.isPlaying = true;
+    state.isPaused = false;
+    state.health = 100;
+
+    // Reset weapons inventory
+    state.weapons = { pistol: true, rifle: false, shotgun: false, sniper: false };
+    state.currentWeapon = 'pistol';
+    updateWeaponSlots();
+
+    // Reset game timer
+    gameStartTime = Date.now();
+
+    // Reset position
+    camera.position.set(0, PLAYER_HEIGHT, 0);
+
+    // Update UI
+    mainMenu.classList.add('hidden');
+    crosshair.classList.remove('hidden');
+    difficultyDisplay.textContent = `Difficulty: ${DIFFICULTY_SETTINGS[difficulty].label}`;
+    updateHealth();
+
+    // Send player info to server
+    socket.emit('setPlayerInfo', {
+      name: state.playerName,
+      team: state.team,
+      difficulty: difficulty
+    });
+
+    // Lock pointer
+    renderer.domElement.requestPointerLock();
+
+  } catch (error) {
+    console.error('Failed to connect:', error);
+    connectionStatus.textContent = 'Connection failed! Check address.';
+    connectionStatus.className = 'error';
+    document.querySelectorAll('.difficulty-btn').forEach(btn => btn.disabled = false);
+  }
 }
 
 // Pause game
@@ -4065,6 +4096,16 @@ function quitToMenu() {
   pauseOverlay.classList.remove('active');
   mainMenu.classList.remove('hidden');
   crosshair.classList.add('hidden');
+
+  // Re-enable difficulty buttons
+  document.querySelectorAll('.difficulty-btn').forEach(btn => btn.disabled = false);
+
+  // Clear connection status
+  const connectionStatus = document.getElementById('connection-status');
+  if (connectionStatus && socket && socket.connected) {
+    connectionStatus.textContent = 'Connected';
+    connectionStatus.className = 'connected';
+  }
 
   document.exitPointerLock();
 }
@@ -4502,11 +4543,47 @@ document.addEventListener('keyup', (event) => {
 
 // ==================== NETWORKING ====================
 
-const socket = io('http://localhost:3000');
+let socket = null;
 
-socket.on('connect', () => {
-  console.log('Connected to server');
-});
+function connectToServer(address) {
+  return new Promise((resolve, reject) => {
+    // Ensure address has protocol
+    if (!address.startsWith('http://') && !address.startsWith('https://')) {
+      address = 'http://' + address;
+    }
+
+    console.log(`Connecting to server: ${address}`);
+
+    socket = io(address, {
+      timeout: 5000,
+      reconnection: true,
+      reconnectionAttempts: 3,
+      reconnectionDelay: 1000
+    });
+
+    const connectTimeout = setTimeout(() => {
+      socket.disconnect();
+      reject(new Error('Connection timeout'));
+    }, 5000);
+
+    socket.on('connect', () => {
+      clearTimeout(connectTimeout);
+      console.log('Connected to server');
+      resolve();
+    });
+
+    socket.on('connect_error', (error) => {
+      clearTimeout(connectTimeout);
+      console.error('Connection error:', error);
+      reject(error);
+    });
+
+    setupSocketHandlers();
+  });
+}
+
+function setupSocketHandlers() {
+  if (!socket) return;
 
 socket.on('players', (players) => {
   document.getElementById('player-count').textContent = `Players: ${Object.keys(players).length}`;
@@ -5067,6 +5144,7 @@ socket.on('vehicleMoved', (data) => {
     vehicle.speed = data.speed;
   }
 });
+} // End setupSocketHandlers
 
 // ==================== SCOREBOARD SYSTEM ====================
 
@@ -5081,8 +5159,9 @@ function updateScoreboard() {
   const allPlayers = [];
 
   // Add self
+  const myId = socket ? socket.id : 'local';
   allPlayers.push({
-    id: socket.id,
+    id: myId,
     name: state.playerName,
     team: state.team,
     kills: state.kills,
@@ -5092,7 +5171,7 @@ function updateScoreboard() {
 
   // Add other players from playerStats
   for (const id in playerStats) {
-    if (id !== socket.id) {
+    if (id !== myId) {
       allPlayers.push({
         id,
         ...playerStats[id],
@@ -5586,4 +5665,11 @@ function animate() {
 updateHealth();
 updateAmmoDisplay();
 updateWeaponDisplay();
+
+// Load saved server address from localStorage
+const savedServerAddress = localStorage.getItem('combatServerAddress');
+if (savedServerAddress) {
+  document.getElementById('server-address').value = savedServerAddress;
+}
+
 animate();
