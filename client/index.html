@@ -427,6 +427,48 @@
       background: rgba(155, 89, 182, 0.3);
     }
 
+    /* Graphics Quality Selection */
+    .graphics-section {
+      margin-bottom: 25px;
+    }
+    .graphics-section label {
+      display: block;
+      font-size: 14px;
+      color: #888;
+      margin-bottom: 10px;
+    }
+    .graphics-buttons {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+    }
+    .graphics-btn {
+      padding: 8px 16px;
+      font-size: 12px;
+      font-weight: bold;
+      border: 2px solid #555;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.5);
+      color: #aaa;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .graphics-btn:hover {
+      border-color: #888;
+      color: white;
+    }
+    .graphics-btn.selected {
+      border-color: #3498db;
+      color: white;
+      background: rgba(52, 152, 219, 0.3);
+    }
+    .graphics-desc {
+      font-size: 11px;
+      color: #666;
+      margin-top: 8px;
+      text-align: center;
+    }
+
     /* Pause Menu */
     #pause-menu {
       position: absolute;
@@ -1164,6 +1206,9 @@
       text-align: center;
       z-index: 100;
     }
+    #gamemode-hud.hidden {
+      display: none;
+    }
     .mode-hud {
       background: rgba(0, 0, 0, 0.7);
       border: 2px solid #555;
@@ -1171,6 +1216,9 @@
       padding: 10px 20px;
       font-size: 16px;
       font-weight: bold;
+    }
+    .mode-hud.hidden {
+      display: none;
     }
     /* Deathmatch */
     #dm-timer {
@@ -1615,6 +1663,271 @@
       from { opacity: 1; transform: translateX(-50%) translateY(0); }
       to { opacity: 0; transform: translateX(-50%) translateY(20px); }
     }
+
+    /* XP Bar */
+    #xp-bar-container {
+      position: absolute;
+      bottom: 60px;
+      left: 30px;
+      width: 200px;
+    }
+    #xp-bar {
+      width: 100%;
+      height: 8px;
+      background: rgba(0, 0, 0, 0.5);
+      border: 1px solid #9b59b6;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    #xp-fill {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #9b59b6, #8e44ad);
+      transition: width 0.3s ease-out;
+    }
+    #xp-info {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 3px;
+    }
+    #level-text {
+      font-size: 12px;
+      color: #9b59b6;
+      font-weight: bold;
+      text-shadow: 1px 1px 2px black;
+    }
+    #xp-text {
+      font-size: 10px;
+      color: #888;
+      text-shadow: 1px 1px 2px black;
+    }
+
+    /* XP Popup */
+    .xp-popup {
+      position: fixed;
+      top: 35%;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #9b59b6;
+      font-size: 22px;
+      font-weight: bold;
+      text-shadow: 0 0 10px #9b59b6, 2px 2px 4px black;
+      pointer-events: none;
+      z-index: 500;
+      animation: xpPopIn 0.3s ease-out;
+    }
+    .xp-popup small {
+      font-size: 12px;
+      color: #bb88dd;
+    }
+    .xp-popup.fade-out {
+      animation: xpPopOut 0.5s ease-out forwards;
+    }
+    @keyframes xpPopIn {
+      from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+      to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+    @keyframes xpPopOut {
+      from { opacity: 1; transform: translateX(-50%) translateY(0); }
+      to { opacity: 0; transform: translateX(-50%) translateY(-30px); }
+    }
+
+    /* Level Up Notification */
+    #level-up-notification {
+      position: fixed;
+      top: 20%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: linear-gradient(135deg, rgba(155, 89, 182, 0.95), rgba(142, 68, 173, 0.95));
+      border: 3px solid #e74c3c;
+      border-radius: 15px;
+      padding: 25px 50px;
+      text-align: center;
+      z-index: 600;
+      animation: levelUpBounce 0.5s ease-out;
+      box-shadow: 0 0 40px rgba(155, 89, 182, 0.8);
+    }
+    #level-up-notification.hidden {
+      display: none;
+    }
+    .level-up-title {
+      font-size: 36px;
+      font-weight: bold;
+      color: #ffd700;
+      text-shadow: 0 0 20px #ffd700, 2px 2px 4px black;
+      letter-spacing: 5px;
+    }
+    .level-up-level {
+      font-size: 48px;
+      font-weight: bold;
+      color: white;
+      text-shadow: 2px 2px 4px black;
+      margin: 10px 0;
+    }
+    .level-up-perks {
+      font-size: 16px;
+      color: #2ecc71;
+      margin-top: 10px;
+    }
+    @keyframes levelUpBounce {
+      0% { transform: translateX(-50%) scale(0.5); opacity: 0; }
+      50% { transform: translateX(-50%) scale(1.1); }
+      100% { transform: translateX(-50%) scale(1); opacity: 1; }
+    }
+
+    /* Perk Menu */
+    #perk-menu {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.9);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      pointer-events: auto;
+    }
+    #perk-menu.hidden {
+      display: none;
+    }
+    .perk-container {
+      background: rgba(20, 20, 30, 0.95);
+      border: 2px solid #9b59b6;
+      border-radius: 15px;
+      padding: 30px;
+      max-width: 500px;
+      width: 90%;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    .perk-container h2 {
+      text-align: center;
+      color: #9b59b6;
+      margin-bottom: 5px;
+      font-size: 24px;
+      letter-spacing: 3px;
+    }
+    .perk-close {
+      text-align: center;
+      color: #666;
+      font-size: 12px;
+      margin-bottom: 20px;
+    }
+    .perk-section-header {
+      color: #888;
+      font-size: 14px;
+      margin: 15px 0 10px 0;
+      padding-bottom: 5px;
+      border-bottom: 1px solid #444;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .perk-item {
+      background: rgba(40, 40, 50, 0.9);
+      border: 2px solid #555;
+      border-radius: 8px;
+      padding: 12px 15px;
+      margin-bottom: 10px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .perk-item:hover:not(.locked):not(.selected) {
+      border-color: #9b59b6;
+      background: rgba(155, 89, 182, 0.2);
+    }
+    .perk-item.selected {
+      border-color: #2ecc71;
+      background: rgba(46, 204, 113, 0.2);
+    }
+    .perk-item.locked {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .perk-name {
+      color: white;
+      font-size: 16px;
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+    .perk-item.selected .perk-name {
+      color: #2ecc71;
+    }
+    .perk-desc {
+      color: #aaa;
+      font-size: 13px;
+    }
+    .perk-level {
+      color: #9b59b6;
+      font-size: 11px;
+      margin-top: 5px;
+    }
+    .perk-item.locked .perk-level {
+      color: #666;
+    }
+
+    /* Performance Stats */
+    #fps-counter {
+      position: absolute;
+      top: 210px;
+      left: 20px;
+      font-size: 12px;
+      color: #0f0;
+      text-shadow: 1px 1px 2px black;
+      font-family: monospace;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 3px 8px;
+      border-radius: 3px 3px 0 0;
+    }
+    #fps-counter.low {
+      color: #f00;
+    }
+    #fps-counter.medium {
+      color: #ff0;
+    }
+    #render-stats {
+      position: absolute;
+      top: 230px;
+      left: 20px;
+      font-size: 10px;
+      color: #888;
+      text-shadow: 1px 1px 2px black;
+      font-family: monospace;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 3px 8px;
+      border-radius: 0 0 3px 3px;
+    }
+
+    /* Weather Indicator */
+    #weather-indicator {
+      position: absolute;
+      top: 45px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 12px;
+      padding: 3px 12px;
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.4);
+      text-shadow: 1px 1px 2px black;
+    }
+    #weather-indicator.weather-clear {
+      color: #87CEEB;
+      border: 1px solid #87CEEB;
+    }
+    #weather-indicator.weather-rain {
+      color: #4a90d9;
+      border: 1px solid #4a90d9;
+    }
+    #weather-indicator.weather-fog {
+      color: #aabbcc;
+      border: 1px solid #aabbcc;
+    }
+    #weather-indicator.weather-sandstorm {
+      color: #d4a460;
+      border: 1px solid #d4a460;
+    }
   </style>
 </head>
 <body>
@@ -1632,9 +1945,24 @@
       <div id="minimap-coords">0, 0</div>
     </div>
 
+    <!-- Performance Stats -->
+    <div id="fps-counter">FPS: --</div>
+    <div id="render-stats">Draw: -- | Tri: --</div>
+
     <div id="health-text">Health</div>
     <div id="health-bar">
       <div id="health-fill"></div>
+    </div>
+
+    <!-- XP Bar -->
+    <div id="xp-bar-container">
+      <div id="xp-bar">
+        <div id="xp-fill"></div>
+      </div>
+      <div id="xp-info">
+        <span id="level-text">LVL 1</span>
+        <span id="xp-text">0/100 XP</span>
+      </div>
     </div>
 
     <div id="ammo-display">
@@ -1657,6 +1985,7 @@
     <div id="enemy-count">Enemies: 0</div>
     <div id="difficulty-display"></div>
     <div id="time-display">06:00 - Dawn</div>
+    <div id="weather-indicator" class="weather-clear">Clear Skies</div>
     <div id="flashlight-indicator" class="hidden"></div>
 
     <!-- Chat Box -->
@@ -1800,6 +2129,17 @@
         </div>
       </div>
 
+      <div class="graphics-section">
+        <label>Graphics Quality</label>
+        <div class="graphics-buttons">
+          <button class="graphics-btn" data-quality="low">Low</button>
+          <button class="graphics-btn" data-quality="medium">Medium</button>
+          <button class="graphics-btn selected" data-quality="high">High</button>
+          <button class="graphics-btn" data-quality="ultra">Ultra</button>
+        </div>
+        <div class="graphics-desc" id="graphics-desc">Balanced performance and visuals</div>
+      </div>
+
       <h2>Select Difficulty</h2>
       <div class="difficulty-buttons">
         <button class="difficulty-btn easy" data-difficulty="easy">
@@ -1828,6 +2168,7 @@
           <span>E - Enter/Exit Vehicle</span>
           <span>T - All Chat</span>
           <span>Y - Team Chat</span>
+          <span>L - Perks</span>
           <span>ESC - Pause</span>
         </div>
       </div>
@@ -1890,13 +2231,25 @@
       <div id="npc-name"></div>
       <div id="dialogue-text"></div>
       <div id="dialogue-options"></div>
-      <button id="dialogue-close" onclick="closeDialogue()">Close [ESC]</button>
+      <button id="dialogue-close">Close [ESC]</button>
     </div>
 
     <!-- Quest Tracker -->
     <div id="quest-tracker" class="hidden">
       <div id="quest-name"></div>
       <div id="quest-progress"></div>
+    </div>
+
+    <!-- Level Up Notification -->
+    <div id="level-up-notification" class="hidden"></div>
+
+    <!-- Perk Menu -->
+    <div id="perk-menu" class="hidden">
+      <div class="perk-container">
+        <h2>PERKS</h2>
+        <div class="perk-close">Press L to close</div>
+        <div id="perk-list"></div>
+      </div>
     </div>
   </div>
   <script type="module" src="/src/main.js"></script>

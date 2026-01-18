@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { io } from 'socket.io-client';
 
 // ==================== AUDIO SYSTEM ====================
@@ -720,6 +721,381 @@ function renderInventoryUI() {
   }
 }
 
+// ==================== XP AND LEVELING SYSTEM ====================
+
+const XP_CONFIG = {
+  levelThresholds: [0, 100, 250, 500, 1000, 1750, 2750, 4000, 5500, 7500, 10000, 13000, 16500, 20500, 25000]
+};
+
+const PERKS = {
+  fastReload: { level: 2, name: 'Fast Reload', description: '20% faster reload', effect: 'reloadMult', value: 0.8 },
+  thickSkin: { level: 3, name: 'Thick Skin', description: '+25 max health', effect: 'maxHealth', value: 125 },
+  marathonRunner: { level: 4, name: 'Marathon Runner', description: '20% faster sprint', effect: 'sprintMult', value: 1.2 },
+  steadyAim: { level: 5, name: 'Steady Aim', description: '15% less spread', effect: 'spreadMult', value: 0.85 },
+  scavenger: { level: 6, name: 'Scavenger', description: '50% more ammo pickups', effect: 'ammoMult', value: 1.5 },
+  quickDraw: { level: 7, name: 'Quick Draw', description: '20% faster weapon swap', effect: 'swapMult', value: 0.8 },
+  juggernaut: { level: 8, name: 'Juggernaut', description: '15% less damage taken', effect: 'damageTaken', value: 0.85 },
+  doubleTime: { level: 10, name: 'Double Time', description: 'Sprint duration doubled', effect: 'sprintDuration', value: 2.0 }
+};
+
+// Update XP bar display
+function updateXPBar() {
+  const xpFill = document.getElementById('xp-fill');
+  const xpText = document.getElementById('xp-text');
+  const levelText = document.getElementById('level-text');
+
+  if (!xpFill || !xpText || !levelText) return;
+
+  const currentLevelXp = XP_CONFIG.levelThresholds[state.level - 1] || 0;
+  const nextLevelXp = XP_CONFIG.levelThresholds[state.level] || state.xp;
+  const xpInLevel = state.xp - currentLevelXp;
+  const xpNeeded = nextLevelXp - currentLevelXp;
+  const percentage = Math.min(100, (xpInLevel / xpNeeded) * 100);
+
+  xpFill.style.width = `${percentage}%`;
+  xpText.textContent = `${xpInLevel}/${xpNeeded} XP`;
+  levelText.textContent = `LVL ${state.level}`;
+}
+
+// Show XP gained popup
+function showXPGained(amount, reason) {
+  const xpPopup = document.createElement('div');
+  xpPopup.className = 'xp-popup';
+  xpPopup.innerHTML = `+${amount} XP<br><small>${reason}</small>`;
+  document.body.appendChild(xpPopup);
+
+  // Animate and remove
+  setTimeout(() => {
+    xpPopup.classList.add('fade-out');
+    setTimeout(() => xpPopup.remove(), 500);
+  }, 1500);
+}
+
+// Show level up notification
+function showLevelUp(newLevel, newPerks) {
+  const levelUpEl = document.getElementById('level-up-notification');
+  if (levelUpEl) {
+    levelUpEl.innerHTML = `
+      <div class="level-up-title">LEVEL UP!</div>
+      <div class="level-up-level">Level ${newLevel}</div>
+      ${newPerks.length > 0 ? `<div class="level-up-perks">New perk available: ${newPerks.map(p => p.name).join(', ')}</div>` : ''}
+    `;
+    levelUpEl.classList.remove('hidden');
+    playSound('pickup'); // Level up sound
+
+    setTimeout(() => {
+      levelUpEl.classList.add('hidden');
+    }, 4000);
+  }
+}
+
+// Get perk value for a specific effect
+function getPerkValue(effectName, defaultValue) {
+  for (const perkId of state.perks) {
+    const perk = PERKS[perkId];
+    if (perk && perk.effect === effectName) {
+      return perk.value;
+    }
+  }
+  return defaultValue;
+}
+
+// Check if player has a specific perk
+function hasPerk(perkId) {
+  return state.perks.includes(perkId);
+}
+
+// Open perk menu
+function openPerkMenu() {
+  if (state.gameState !== 'playing') return;
+
+  state.perkMenuOpen = true;
+  document.getElementById('perk-menu').classList.remove('hidden');
+  document.exitPointerLock();
+  socket.emit('requestPerks');
+}
+
+// Close perk menu
+function closePerkMenu() {
+  state.perkMenuOpen = false;
+  document.getElementById('perk-menu').classList.add('hidden');
+
+  if (state.gameState === 'playing') {
+    renderer.domElement.requestPointerLock();
+  }
+}
+
+// Render perk menu UI
+function renderPerkMenu(perksData) {
+  const container = document.getElementById('perk-list');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  // Render unlocked perks
+  if (perksData.unlockedPerks && perksData.unlockedPerks.length > 0) {
+    const unlockedHeader = document.createElement('div');
+    unlockedHeader.className = 'perk-section-header';
+    unlockedHeader.textContent = 'Available Perks';
+    container.appendChild(unlockedHeader);
+
+    for (const perk of perksData.unlockedPerks) {
+      const perkDiv = document.createElement('div');
+      perkDiv.className = 'perk-item' + (perk.selected ? ' selected' : '');
+
+      perkDiv.innerHTML = `
+        <div class="perk-name">${perk.name}</div>
+        <div class="perk-desc">${perk.description}</div>
+        <div class="perk-level">Unlocked at Level ${perk.level}</div>
+      `;
+
+      if (!perk.selected) {
+        perkDiv.onclick = () => {
+          socket.emit('selectPerk', { perkId: perk.id });
+        };
+      }
+
+      container.appendChild(perkDiv);
+    }
+  }
+
+  // Render locked perks
+  if (perksData.lockedPerks && Object.keys(perksData.lockedPerks).length > 0) {
+    const lockedHeader = document.createElement('div');
+    lockedHeader.className = 'perk-section-header';
+    lockedHeader.textContent = 'Locked Perks';
+    container.appendChild(lockedHeader);
+
+    for (const [perkId, perk] of Object.entries(perksData.lockedPerks)) {
+      const perkDiv = document.createElement('div');
+      perkDiv.className = 'perk-item locked';
+
+      perkDiv.innerHTML = `
+        <div class="perk-name">${perk.name}</div>
+        <div class="perk-desc">${perk.description}</div>
+        <div class="perk-level">Requires Level ${perk.level}</div>
+      `;
+
+      container.appendChild(perkDiv);
+    }
+  }
+}
+
+// Save XP progress to localStorage
+function saveXPProgress() {
+  const data = {
+    xp: state.xp,
+    level: state.level,
+    perks: state.perks
+  };
+  localStorage.setItem('combatXPProgress', JSON.stringify(data));
+}
+
+// Load XP progress from localStorage
+function loadXPProgress() {
+  const saved = localStorage.getItem('combatXPProgress');
+  if (saved) {
+    try {
+      const data = JSON.parse(saved);
+      if (data.xp !== undefined) state.xp = data.xp;
+      if (data.level !== undefined) state.level = data.level;
+      if (data.perks) state.perks = data.perks;
+    } catch (e) {
+      console.warn('Failed to load XP progress:', e);
+    }
+  }
+}
+
+// ==================== WEATHER SYSTEM ====================
+
+const WEATHER_TYPES = {
+  clear: {
+    fogNear: 200,
+    fogFar: 400,
+    fogColor: 0x87CEEB,
+    particleCount: 0,
+    ambientIntensity: 0.6
+  },
+  rain: {
+    fogNear: 50,
+    fogFar: 150,
+    fogColor: 0x4a6080,
+    particleCount: 2000,
+    particleSpeed: -50,
+    particleColor: 0x8899aa,
+    particleSize: 0.1,
+    ambientIntensity: 0.3
+  },
+  fog: {
+    fogNear: 10,
+    fogFar: 60,
+    fogColor: 0xaabbcc,
+    particleCount: 0,
+    ambientIntensity: 0.4
+  },
+  sandstorm: {
+    fogNear: 20,
+    fogFar: 80,
+    fogColor: 0xc9a868,
+    particleCount: 1500,
+    particleSpeedX: 30,
+    particleSpeedZ: 10,
+    particleColor: 0xd4a460,
+    particleSize: 0.3,
+    ambientIntensity: 0.5
+  }
+};
+
+let weatherParticles = null;
+let weatherParticlePositions = null;
+let currentWeatherType = 'clear';
+let targetFogNear = 200;
+let targetFogFar = 400;
+let targetFogColor = new THREE.Color(0x87CEEB);
+
+// Create weather particle system
+function createWeatherParticles(type) {
+  // Remove existing particles
+  if (weatherParticles) {
+    scene.remove(weatherParticles);
+    weatherParticles.geometry.dispose();
+    weatherParticles.material.dispose();
+    weatherParticles = null;
+  }
+
+  const weatherConfig = WEATHER_TYPES[type];
+  if (!weatherConfig || weatherConfig.particleCount === 0) return;
+
+  const particleCount = weatherConfig.particleCount;
+  const geometry = new THREE.BufferGeometry();
+  const positions = new Float32Array(particleCount * 3);
+
+  // Spread particles around the player
+  for (let i = 0; i < particleCount; i++) {
+    positions[i * 3] = (Math.random() - 0.5) * 100;
+    positions[i * 3 + 1] = Math.random() * 50;
+    positions[i * 3 + 2] = (Math.random() - 0.5) * 100;
+  }
+
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  weatherParticlePositions = positions;
+
+  const material = new THREE.PointsMaterial({
+    color: weatherConfig.particleColor || 0xffffff,
+    size: weatherConfig.particleSize || 0.1,
+    transparent: true,
+    opacity: 0.6,
+    depthWrite: false
+  });
+
+  weatherParticles = new THREE.Points(geometry, material);
+  scene.add(weatherParticles);
+}
+
+// Update weather particles
+function updateWeatherParticles(delta) {
+  if (!weatherParticles || !weatherParticlePositions) return;
+
+  const weatherConfig = WEATHER_TYPES[currentWeatherType];
+  if (!weatherConfig) return;
+
+  const positions = weatherParticlePositions;
+  const count = positions.length / 3;
+
+  for (let i = 0; i < count; i++) {
+    // Rain falls down
+    if (weatherConfig.particleSpeed) {
+      positions[i * 3 + 1] += weatherConfig.particleSpeed * delta;
+    }
+
+    // Sandstorm moves horizontally
+    if (weatherConfig.particleSpeedX) {
+      positions[i * 3] += weatherConfig.particleSpeedX * delta;
+    }
+    if (weatherConfig.particleSpeedZ) {
+      positions[i * 3 + 2] += weatherConfig.particleSpeedZ * delta;
+    }
+
+    // Reset particles that go out of bounds
+    if (positions[i * 3 + 1] < 0) {
+      positions[i * 3 + 1] = 50;
+    }
+    if (positions[i * 3] > 50) {
+      positions[i * 3] = -50;
+    }
+    if (positions[i * 3 + 2] > 50) {
+      positions[i * 3 + 2] = -50;
+    }
+  }
+
+  // Keep particles centered on player
+  if (camera) {
+    weatherParticles.position.x = camera.position.x;
+    weatherParticles.position.z = camera.position.z;
+  }
+
+  weatherParticles.geometry.attributes.position.needsUpdate = true;
+}
+
+// Transition weather
+function transitionWeather(newType) {
+  if (currentWeatherType === newType) return;
+
+  console.log(`Weather changing to: ${newType}`);
+  currentWeatherType = newType;
+
+  const weatherConfig = WEATHER_TYPES[newType];
+  if (!weatherConfig) return;
+
+  // Set target fog values for smooth transition
+  targetFogNear = weatherConfig.fogNear;
+  targetFogFar = weatherConfig.fogFar;
+  targetFogColor = new THREE.Color(weatherConfig.fogColor);
+
+  // Create particles for this weather
+  createWeatherParticles(newType);
+
+  // Update ambient light
+  if (typeof ambientLight !== 'undefined' && ambientLight) {
+    // Will be smoothly transitioned in updateWeather
+  }
+
+  // Show weather notification
+  showWeatherNotification(newType);
+}
+
+// Update weather effects in animation loop
+function updateWeather(delta) {
+  // Smooth fog transition
+  if (scene.fog) {
+    scene.fog.near += (targetFogNear - scene.fog.near) * 0.02;
+    scene.fog.far += (targetFogFar - scene.fog.far) * 0.02;
+    scene.fog.color.lerp(targetFogColor, 0.02);
+    if (scene.background && scene.background.isColor) {
+      scene.background.lerp(targetFogColor, 0.02);
+    }
+  }
+
+  // Update weather particles
+  updateWeatherParticles(delta);
+}
+
+// Show weather notification
+function showWeatherNotification(type) {
+  const weatherNames = {
+    clear: 'Clear Skies',
+    rain: 'Rainstorm',
+    fog: 'Dense Fog',
+    sandstorm: 'Sandstorm'
+  };
+
+  const weatherEl = document.getElementById('weather-indicator');
+  if (weatherEl) {
+    weatherEl.textContent = weatherNames[type] || type;
+    weatherEl.className = `weather-${type}`;
+  }
+}
+
 // Enemy type colors
 const ENEMY_COLORS = {
   soldier: 0xff0000,
@@ -816,7 +1192,14 @@ const state = {
   inDialogue: false,
   currentDialogue: null,
   activeQuests: [],
-  completedQuests: []
+  completedQuests: [],
+  // XP and leveling system
+  xp: 0,
+  level: 1,
+  nextLevelXp: 100,
+  perks: [],
+  availablePerks: [],
+  perkMenuOpen: false
 };
 
 // ==================== GAME MODE 3D OBJECTS ====================
@@ -867,8 +1250,89 @@ const VEHICLE_TYPES = {
     rollSpeed: 2.0,      // How fast it rolls
     maxPitch: Math.PI / 4,  // Max pitch angle (45 degrees)
     liftFactor: 0.02     // How much speed converts to lift
+  },
+  tank: {
+    maxSpeed: 30,
+    acceleration: 10,
+    brake: 30,
+    turnSpeed: 1.2,
+    friction: 8,
+    cameraHeight: 5,
+    cameraDistance: 12,
+    isAircraft: false,
+    hasTurret: true,
+    cannonDamage: 200,
+    cannonCooldown: 3000,
+    armor: 3.0  // Damage reduction factor
+  },
+  boat: {
+    maxSpeed: 50,
+    acceleration: 20,
+    brake: 25,
+    turnSpeed: 1.8,
+    friction: 5,
+    cameraHeight: 3,
+    cameraDistance: 10,
+    isAircraft: false,
+    isWatercraft: true,
+    bobAmount: 0.3
   }
 };
+
+// ==================== WATER SYSTEM ====================
+
+const WATER_ZONES = [
+  { x: 200, z: 200, radius: 80 },     // Lake
+  { x: -150, z: 300, radiusX: 150, radiusZ: 40 },  // River segment 1
+  { x: 0, z: 350, radiusX: 150, radiusZ: 40 },     // River segment 2
+  { x: 150, z: 300, radiusX: 100, radiusZ: 40 }    // River segment 3
+];
+
+const waterMeshes = [];
+
+// Check if position is in water
+function isWaterAt(x, z) {
+  for (const zone of WATER_ZONES) {
+    if (zone.radiusX && zone.radiusZ) {
+      // Elliptical zone (river)
+      const dx = (x - zone.x) / zone.radiusX;
+      const dz = (z - zone.z) / zone.radiusZ;
+      if (dx * dx + dz * dz <= 1) return true;
+    } else {
+      // Circular zone (lake)
+      const dx = x - zone.x;
+      const dz = z - zone.z;
+      if (dx * dx + dz * dz <= zone.radius * zone.radius) return true;
+    }
+  }
+  return false;
+}
+
+// Create water planes for all water zones
+function createWaterPlanes() {
+  const waterMat = new THREE.MeshStandardMaterial({
+    color: 0x1a5276,
+    transparent: true,
+    opacity: 0.7,
+    roughness: 0.2,
+    metalness: 0.1
+  });
+
+  for (const zone of WATER_ZONES) {
+    let geometry;
+    if (zone.radiusX && zone.radiusZ) {
+      geometry = new THREE.PlaneGeometry(zone.radiusX * 2, zone.radiusZ * 2, 16, 16);
+    } else {
+      geometry = new THREE.CircleGeometry(zone.radius, 32);
+    }
+
+    const water = new THREE.Mesh(geometry, waterMat);
+    water.rotation.x = -Math.PI / 2;
+    water.position.set(zone.x, 0.3, zone.z);
+    scene.add(water);
+    waterMeshes.push(water);
+  }
+}
 
 function createJeepMesh() {
   const group = new THREE.Group();
@@ -1162,6 +1626,148 @@ function createAircraftMesh() {
   return group;
 }
 
+function createTankMesh() {
+  const group = new THREE.Group();
+
+  // Hull
+  const hullGeo = new THREE.BoxGeometry(3, 1.2, 5);
+  const hullMat = new THREE.MeshStandardMaterial({ color: 0x4a5a3a }); // Olive drab
+  const hull = new THREE.Mesh(hullGeo, hullMat);
+  hull.position.y = 0.8;
+  hull.castShadow = true;
+  group.add(hull);
+
+  // Sloped front armor
+  const frontGeo = new THREE.BoxGeometry(2.8, 0.8, 1.5);
+  const front = new THREE.Mesh(frontGeo, hullMat);
+  front.position.set(0, 1, 2.8);
+  front.rotation.x = -0.3;
+  group.add(front);
+
+  // Turret base
+  const turretGroup = new THREE.Group();
+  turretGroup.name = 'turret';
+
+  const turretBaseGeo = new THREE.CylinderGeometry(1.2, 1.4, 0.8, 8);
+  const turretMat = new THREE.MeshStandardMaterial({ color: 0x3a4a2a });
+  const turretBase = new THREE.Mesh(turretBaseGeo, turretMat);
+  turretBase.position.y = 0;
+  turretGroup.add(turretBase);
+
+  // Turret top
+  const turretTopGeo = new THREE.BoxGeometry(2, 0.8, 2.2);
+  const turretTop = new THREE.Mesh(turretTopGeo, turretMat);
+  turretTop.position.y = 0.6;
+  turretGroup.add(turretTop);
+
+  // Cannon
+  const cannonGeo = new THREE.CylinderGeometry(0.15, 0.2, 3, 8);
+  const cannonMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a });
+  const cannon = new THREE.Mesh(cannonGeo, cannonMat);
+  cannon.rotation.x = Math.PI / 2;
+  cannon.position.set(0, 0.5, 2);
+  cannon.name = 'cannon';
+  turretGroup.add(cannon);
+
+  turretGroup.position.y = 1.6;
+  group.add(turretGroup);
+
+  // Tracks
+  const trackGeo = new THREE.BoxGeometry(0.5, 0.8, 4.8);
+  const trackMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+  const leftTrack = new THREE.Mesh(trackGeo, trackMat);
+  leftTrack.position.set(-1.5, 0.4, 0);
+  group.add(leftTrack);
+  const rightTrack = new THREE.Mesh(trackGeo, trackMat);
+  rightTrack.position.set(1.5, 0.4, 0);
+  group.add(rightTrack);
+
+  // Wheels on tracks
+  const wheelGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.4, 8);
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+  for (let i = -2; i <= 2; i++) {
+    const leftWheel = new THREE.Mesh(wheelGeo, wheelMat);
+    leftWheel.rotation.z = Math.PI / 2;
+    leftWheel.position.set(-1.5, 0.35, i * 1);
+    group.add(leftWheel);
+    const rightWheel = new THREE.Mesh(wheelGeo, wheelMat);
+    rightWheel.rotation.z = Math.PI / 2;
+    rightWheel.position.set(1.5, 0.35, i * 1);
+    group.add(rightWheel);
+  }
+
+  group.userData.type = 'tank';
+  group.userData.isVehicle = true;
+  group.userData.hasTurret = true;
+  group.userData.turretRotation = 0;
+  group.userData.cannonReady = true;
+  group.userData.lastCannonFire = 0;
+
+  return group;
+}
+
+function createBoatMesh() {
+  const group = new THREE.Group();
+
+  // Hull
+  const hullShape = new THREE.Shape();
+  hullShape.moveTo(0, -2);
+  hullShape.lineTo(1.2, -1.5);
+  hullShape.lineTo(1.5, 0);
+  hullShape.lineTo(1.2, 1.5);
+  hullShape.lineTo(0, 2.5);
+  hullShape.lineTo(-1.2, 1.5);
+  hullShape.lineTo(-1.5, 0);
+  hullShape.lineTo(-1.2, -1.5);
+  hullShape.closePath();
+
+  const hullGeo = new THREE.ExtrudeGeometry(hullShape, {
+    depth: 0.8,
+    bevelEnabled: false
+  });
+  const hullMat = new THREE.MeshStandardMaterial({ color: 0x8B4513 }); // Brown wood
+  const hull = new THREE.Mesh(hullGeo, hullMat);
+  hull.rotation.x = -Math.PI / 2;
+  hull.position.y = 0.4;
+  hull.castShadow = true;
+  group.add(hull);
+
+  // Deck
+  const deckGeo = new THREE.BoxGeometry(2.5, 0.1, 4);
+  const deckMat = new THREE.MeshStandardMaterial({ color: 0xA0522D });
+  const deck = new THREE.Mesh(deckGeo, deckMat);
+  deck.position.y = 1.1;
+  group.add(deck);
+
+  // Cabin
+  const cabinGeo = new THREE.BoxGeometry(1.5, 1, 1.5);
+  const cabinMat = new THREE.MeshStandardMaterial({ color: 0xf5f5dc });
+  const cabin = new THREE.Mesh(cabinGeo, cabinMat);
+  cabin.position.set(0, 1.7, -0.5);
+  group.add(cabin);
+
+  // Windshield
+  const windshieldGeo = new THREE.BoxGeometry(1.3, 0.6, 0.1);
+  const windshieldMat = new THREE.MeshStandardMaterial({ color: 0x87ceeb, transparent: true, opacity: 0.5 });
+  const windshield = new THREE.Mesh(windshieldGeo, windshieldMat);
+  windshield.position.set(0, 1.9, 0.2);
+  group.add(windshield);
+
+  // Motor
+  const motorGeo = new THREE.BoxGeometry(0.6, 0.8, 0.8);
+  const motorMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+  const motor = new THREE.Mesh(motorGeo, motorMat);
+  motor.position.set(0, 1.3, -1.8);
+  group.add(motor);
+
+  group.userData.type = 'boat';
+  group.userData.isVehicle = true;
+  group.userData.isWatercraft = true;
+  group.userData.bobPhase = Math.random() * Math.PI * 2;
+
+  return group;
+}
+
 function spawnVehicle(x, z, rotation = 0, type = 'jeep') {
   const id = `vehicle_${vehicleIdCounter++}`;
   let mesh;
@@ -1169,6 +1775,10 @@ function spawnVehicle(x, z, rotation = 0, type = 'jeep') {
     mesh = createAircraftMesh();
   } else if (type === 'motorcycle') {
     mesh = createMotorcycleMesh();
+  } else if (type === 'tank') {
+    mesh = createTankMesh();
+  } else if (type === 'boat') {
+    mesh = createBoatMesh();
   } else {
     mesh = createJeepMesh();
   }
@@ -2721,12 +3331,83 @@ camera.position.y = PLAYER_HEIGHT;
 
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // Limit pixel ratio for performance
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFShadowMap; // Faster than PCFSoftShadowMap
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 document.body.appendChild(renderer.domElement);
+
+// ==================== GRAPHICS SETTINGS ====================
+const GRAPHICS_PRESETS = {
+  low: {
+    pixelRatio: 1.0,
+    shadowMapSize: 0,  // 0 = shadows disabled
+    shadowType: null,
+    renderDistance: 1,
+    description: 'Best performance, minimal visuals'
+  },
+  medium: {
+    pixelRatio: 1.0,
+    shadowMapSize: 512,
+    shadowType: THREE.BasicShadowMap,
+    renderDistance: 2,
+    description: 'Balanced performance and visuals'
+  },
+  high: {
+    pixelRatio: Math.min(window.devicePixelRatio, 1.5),
+    shadowMapSize: 1024,
+    shadowType: THREE.PCFShadowMap,
+    renderDistance: 2,
+    description: 'Good visuals, moderate performance'
+  },
+  ultra: {
+    pixelRatio: window.devicePixelRatio,
+    shadowMapSize: 2048,
+    shadowType: THREE.PCFSoftShadowMap,
+    renderDistance: 3,
+    description: 'Best visuals, requires powerful GPU'
+  }
+};
+
+let currentGraphicsQuality = localStorage.getItem('graphicsQuality') || 'high';
+
+function applyGraphicsSettings(quality, isInitialLoad = false) {
+  const preset = GRAPHICS_PRESETS[quality];
+  if (!preset) return;
+
+  currentGraphicsQuality = quality;
+  localStorage.setItem('graphicsQuality', quality);
+
+  // Apply pixel ratio
+  renderer.setPixelRatio(preset.pixelRatio);
+
+  // Apply shadow settings
+  if (preset.shadowMapSize === 0) {
+    renderer.shadowMap.enabled = false;
+  } else {
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = preset.shadowType;
+  }
+
+  // Apply render distance (skip on initial load since RENDER_DISTANCE isn't defined yet)
+  if (!isInitialLoad && typeof RENDER_DISTANCE !== 'undefined') {
+    RENDER_DISTANCE = preset.renderDistance;
+  }
+
+  // Update UI
+  document.querySelectorAll('.graphics-btn').forEach(btn => {
+    btn.classList.toggle('selected', btn.dataset.quality === quality);
+  });
+  const descEl = document.getElementById('graphics-desc');
+  if (descEl) descEl.textContent = preset.description;
+}
+
+// Apply saved settings on load (renderer settings only, RENDER_DISTANCE set later)
+applyGraphicsSettings(currentGraphicsQuality, true);
+
+// Get shadow map size for current quality
+function getCurrentShadowMapSize() {
+  return GRAPHICS_PRESETS[currentGraphicsQuality].shadowMapSize || 1024;
+}
 
 // Create gradient sky using a large sphere
 const skyGeometry = new THREE.SphereGeometry(400, 32, 32);
@@ -2768,8 +3449,9 @@ scene.add(ambientLight);
 const directionalLight = new THREE.DirectionalLight(0xffffee, 1.0);
 directionalLight.position.set(50, 100, 50);
 directionalLight.castShadow = true;
-directionalLight.shadow.mapSize.width = 1024;  // Reduced from 2048
-directionalLight.shadow.mapSize.height = 1024;
+const shadowSize = getCurrentShadowMapSize();
+directionalLight.shadow.mapSize.width = shadowSize;
+directionalLight.shadow.mapSize.height = shadowSize;
 directionalLight.shadow.camera.near = 1;
 directionalLight.shadow.camera.far = 200;  // Reduced from 500
 directionalLight.shadow.camera.left = -60;  // Reduced from 100
@@ -2941,7 +3623,7 @@ function updateTimeDisplay() {
 
 // ==================== INFINITE TERRAIN SYSTEM ====================
 const CHUNK_SIZE = 64;
-const RENDER_DISTANCE = 2; // chunks in each direction (reduced from 3 for performance)
+let RENDER_DISTANCE = GRAPHICS_PRESETS[currentGraphicsQuality]?.renderDistance || 2; // adjustable via graphics settings
 const chunks = {};
 const collidableObjects = [];
 
@@ -3019,6 +3701,39 @@ const sharedStreetMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
 const sharedLineMaterial = new THREE.MeshLambertMaterial({ color: 0xcccc00 });
 const sharedSidewalkMaterial = new THREE.MeshLambertMaterial({ color: 0x777777 });
 
+// Pre-merged chunk geometries for fewer draw calls (9 meshes → 4 meshes per chunk)
+// All positions are relative to chunk center (CHUNK_SIZE/2, 0, CHUNK_SIZE/2)
+const streetWidth = 8;
+const sidewalkWidth = 1.5;
+
+// Helper to clone, rotate, and translate a plane geometry
+function prepareChunkGeometry(geo, yOffset, xOffset = 0, zOffset = 0) {
+  const clone = geo.clone();
+  clone.rotateX(-Math.PI / 2);
+  clone.translate(xOffset, yOffset, zOffset);
+  return clone;
+}
+
+// Merge horizontal + vertical streets into one geometry
+const mergedStreetGeometry = mergeGeometries([
+  prepareChunkGeometry(sharedStreetHGeometry, 0.05),
+  prepareChunkGeometry(sharedStreetVGeometry, 0.05)
+]);
+
+// Merge horizontal + vertical center lines into one geometry
+const mergedLineGeometry = mergeGeometries([
+  prepareChunkGeometry(sharedLineHGeometry, 0.06),
+  prepareChunkGeometry(sharedLineVGeometry, 0.06)
+]);
+
+// Merge all 4 sidewalks into one geometry
+const mergedSidewalkGeometry = mergeGeometries([
+  prepareChunkGeometry(sharedSidewalkHGeometry, 0.07, 0, -streetWidth / 2 - sidewalkWidth / 2),
+  prepareChunkGeometry(sharedSidewalkHGeometry, 0.07, 0, streetWidth / 2 + sidewalkWidth / 2),
+  prepareChunkGeometry(sharedSidewalkVGeometry, 0.07, -streetWidth / 2 - sidewalkWidth / 2, 0),
+  prepareChunkGeometry(sharedSidewalkVGeometry, 0.07, streetWidth / 2 + sidewalkWidth / 2, 0)
+]);
+
 // Shared geometries and materials for instanced objects
 const sharedTreeTrunkGeometry = new THREE.CylinderGeometry(0.3, 0.4, 2.5, 6); // Simplified, fewer segments
 const sharedTreeFoliageGeometry = new THREE.ConeGeometry(2.5, 5, 6); // Simplified
@@ -3067,84 +3782,21 @@ const BUILDING_COLORS = [
   0x8B7355, 0x7B6652, 0x6B5344, 0x5C4033
 ];
 
-// Streetlight system
-const streetlights = [];
+// Streetlight system (uses InstancedMesh with shared material for day/night toggle)
 const STREETLIGHT_SPACING = 32; // Distance between streetlights (increased for performance)
-
-function createStreetlight(x, z) {
-  const group = new THREE.Group();
-
-  // Pole
-  const poleGeo = new THREE.CylinderGeometry(0.15, 0.2, 6, 8);
-  const poleMat = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.8, roughness: 0.3 });
-  const pole = new THREE.Mesh(poleGeo, poleMat);
-  pole.position.y = 3;
-  pole.castShadow = false;
-  group.add(pole);
-
-  // Arm (horizontal part)
-  const armGeo = new THREE.CylinderGeometry(0.08, 0.08, 1.5, 8);
-  const arm = new THREE.Mesh(armGeo, poleMat);
-  arm.rotation.z = Math.PI / 2;
-  arm.position.set(0.75, 5.8, 0);
-  group.add(arm);
-
-  // Lamp housing
-  const housingGeo = new THREE.CylinderGeometry(0.4, 0.3, 0.5, 8);
-  const housingMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.9, roughness: 0.2 });
-  const housing = new THREE.Mesh(housingGeo, housingMat);
-  housing.position.set(1.4, 5.6, 0);
-  group.add(housing);
-
-  // Light bulb (emissive when on)
-  const bulbGeo = new THREE.SphereGeometry(0.2, 8, 8);
-  const bulbMat = new THREE.MeshStandardMaterial({
-    color: 0xffffcc,
-    emissive: 0x000000,
-    emissiveIntensity: 0
-  });
-  const bulb = new THREE.Mesh(bulbGeo, bulbMat);
-  bulb.position.set(1.4, 5.3, 0);
-  group.add(bulb);
-
-  // Point light (for actual illumination)
-  const light = new THREE.PointLight(0xffeecc, 0, 25, 2);
-  light.position.set(1.4, 5.3, 0);
-  light.castShadow = false; // Too many shadows would be expensive
-  group.add(light);
-
-  group.position.set(x, 0, z);
-
-  // Store references for day/night control
-  group.userData.bulb = bulb;
-  group.userData.light = light;
-  group.userData.isOn = false;
-
-  streetlights.push(group);
-  return group;
-}
+let streetlightsOn = false; // Track current state to avoid unnecessary material updates
 
 function updateStreetlights(timeOfDay) {
   // Turn on lights during night hours (0.75 = dusk to 0.25 = dawn)
   const shouldBeOn = timeOfDay > 0.7 || timeOfDay < 0.25;
 
-  for (const streetlight of streetlights) {
-    if (streetlight.userData.isOn !== shouldBeOn) {
-      streetlight.userData.isOn = shouldBeOn;
-      const bulb = streetlight.userData.bulb;
-      const light = streetlight.userData.light;
-
-      if (shouldBeOn) {
-        // Turn on
-        bulb.material.emissive.setHex(0xffffaa);
-        bulb.material.emissiveIntensity = 2;
-        light.intensity = 1.5;
-      } else {
-        // Turn off
-        bulb.material.emissive.setHex(0x000000);
-        bulb.material.emissiveIntensity = 0;
-        light.intensity = 0;
-      }
+  if (streetlightsOn !== shouldBeOn) {
+    streetlightsOn = shouldBeOn;
+    // Toggle shared bulb material color for all InstancedMesh streetlights
+    if (shouldBeOn) {
+      sharedLightBulbMaterial.color.setHex(0xffffaa); // Bright yellow when on
+    } else {
+      sharedLightBulbMaterial.color.setHex(0x666666); // Dim gray when off
     }
   }
 }
@@ -3582,65 +4234,24 @@ function createChunk(cx, cz) {
   // Skip grid helper for performance (commented out)
   // const gridHelper = new THREE.GridHelper(CHUNK_SIZE, 8, 0x2d6c30, 0x2d6c30);
 
-  // Street configuration
-  const streetWidth = 8;
-  const streetY = 0.05; // Slightly above ground to prevent z-fighting
+  // Streets, lines, and sidewalks using pre-merged geometries (8 meshes → 3 meshes)
+  const chunkCenter = { x: worldX + CHUNK_SIZE / 2, z: worldZ + CHUNK_SIZE / 2 };
 
-  // Shared materials (reuse across streets)
-  const streetMat = sharedStreetMaterial;
-  const lineMat = sharedLineMaterial;
-  const sidewalkMat = sharedSidewalkMaterial;
+  // Merged streets (horizontal + vertical)
+  const streets = new THREE.Mesh(mergedStreetGeometry, sharedStreetMaterial);
+  streets.position.set(chunkCenter.x, 0, chunkCenter.z);
+  streets.receiveShadow = true;
+  chunk.add(streets);
 
-  // Horizontal street (using shared geometry)
-  const hStreet = new THREE.Mesh(sharedStreetHGeometry, streetMat);
-  hStreet.rotation.x = -Math.PI / 2;
-  hStreet.position.set(worldX + CHUNK_SIZE / 2, streetY, worldZ + CHUNK_SIZE / 2);
-  hStreet.receiveShadow = true;
-  chunk.add(hStreet);
+  // Merged center lines (horizontal + vertical)
+  const lines = new THREE.Mesh(mergedLineGeometry, sharedLineMaterial);
+  lines.position.set(chunkCenter.x, 0, chunkCenter.z);
+  chunk.add(lines);
 
-  // Vertical street (using shared geometry)
-  const vStreet = new THREE.Mesh(sharedStreetVGeometry, streetMat);
-  vStreet.rotation.x = -Math.PI / 2;
-  vStreet.position.set(worldX + CHUNK_SIZE / 2, streetY, worldZ + CHUNK_SIZE / 2);
-  vStreet.receiveShadow = true;
-  chunk.add(vStreet);
-
-  // Center line for horizontal street (using shared geometry)
-  const hLine = new THREE.Mesh(sharedLineHGeometry, lineMat);
-  hLine.rotation.x = -Math.PI / 2;
-  hLine.position.set(worldX + CHUNK_SIZE / 2, streetY + 0.01, worldZ + CHUNK_SIZE / 2);
-  chunk.add(hLine);
-
-  // Center line for vertical street (using shared geometry)
-  const vLine = new THREE.Mesh(sharedLineVGeometry, lineMat);
-  vLine.rotation.x = -Math.PI / 2;
-  vLine.position.set(worldX + CHUNK_SIZE / 2, streetY + 0.01, worldZ + CHUNK_SIZE / 2);
-  chunk.add(vLine);
-
-  // Sidewalks along streets (using shared geometry)
-  const sidewalkWidth = 1.5;
-
-  // Sidewalks for horizontal street
-  const hSidewalk1 = new THREE.Mesh(sharedSidewalkHGeometry, sidewalkMat);
-  hSidewalk1.rotation.x = -Math.PI / 2;
-  hSidewalk1.position.set(worldX + CHUNK_SIZE / 2, streetY + 0.02, worldZ + CHUNK_SIZE / 2 - streetWidth / 2 - sidewalkWidth / 2);
-  chunk.add(hSidewalk1);
-
-  const hSidewalk2 = new THREE.Mesh(sharedSidewalkHGeometry, sidewalkMat);
-  hSidewalk2.rotation.x = -Math.PI / 2;
-  hSidewalk2.position.set(worldX + CHUNK_SIZE / 2, streetY + 0.02, worldZ + CHUNK_SIZE / 2 + streetWidth / 2 + sidewalkWidth / 2);
-  chunk.add(hSidewalk2);
-
-  // Sidewalks for vertical street (using shared geometry)
-  const vSidewalk1 = new THREE.Mesh(sharedSidewalkVGeometry, sidewalkMat);
-  vSidewalk1.rotation.x = -Math.PI / 2;
-  vSidewalk1.position.set(worldX + CHUNK_SIZE / 2 - streetWidth / 2 - sidewalkWidth / 2, streetY + 0.02, worldZ + CHUNK_SIZE / 2);
-  chunk.add(vSidewalk1);
-
-  const vSidewalk2 = new THREE.Mesh(sharedSidewalkVGeometry, sidewalkMat);
-  vSidewalk2.rotation.x = -Math.PI / 2;
-  vSidewalk2.position.set(worldX + CHUNK_SIZE / 2 + streetWidth / 2 + sidewalkWidth / 2, streetY + 0.02, worldZ + CHUNK_SIZE / 2);
-  chunk.add(vSidewalk2);
+  // Merged sidewalks (all 4)
+  const sidewalks = new THREE.Mesh(mergedSidewalkGeometry, sharedSidewalkMaterial);
+  sidewalks.position.set(chunkCenter.x, 0, chunkCenter.z);
+  chunk.add(sidewalks);
 
   // Add streetlights using InstancedMesh (simplified for performance)
   const lightOffset = streetWidth / 2 + sidewalkWidth + 0.5;
@@ -4067,12 +4678,18 @@ function spawnInitialVehicles() {
     { x: -45, z: -30, rotation: Math.PI / 2, type: 'motorcycle' },
     { x: 60, z: -50, rotation: 0, type: 'jeep' },
     { x: 10, z: 30, rotation: Math.PI / 6, type: 'motorcycle' },
-    { x: 80, z: 10, rotation: 0, type: 'aircraft' }
+    { x: 80, z: 10, rotation: 0, type: 'aircraft' },
+    { x: -60, z: 40, rotation: Math.PI / 4, type: 'tank' },
+    { x: 130, z: 200, rotation: 0, type: 'boat' },      // Near lake
+    { x: 220, z: 150, rotation: Math.PI / 2, type: 'boat' }  // Near lake
   ];
 
   vehicleSpawns.forEach(spawn => {
     spawnVehicle(spawn.x, spawn.z, spawn.rotation, spawn.type);
   });
+
+  // Create water planes
+  createWaterPlanes();
 }
 
 // Spawn vehicles in chunks (called during chunk creation)
@@ -4088,15 +4705,28 @@ function spawnChunkVehicles(cx, cz, seed) {
     const vx = worldX + 10 + seededRandom(seed + 9001) * (CHUNK_SIZE - 20);
     const vz = worldZ + 10 + seededRandom(seed + 9002) * (CHUNK_SIZE - 20);
     const vRotation = seededRandom(seed + 9003) * Math.PI * 2;
-    // 10% aircraft, 35% motorcycle, 55% jeep
+
+    // Check if spawn point is in water
+    const inWater = isWaterAt(vx, vz);
+
+    // Vehicle type distribution
     const typeRoll = seededRandom(seed + 9004);
     let vehicleType;
-    if (typeRoll < 0.1) {
-      vehicleType = 'aircraft';
-    } else if (typeRoll < 0.45) {
-      vehicleType = 'motorcycle';
+
+    if (inWater) {
+      // In water: spawn boat
+      vehicleType = 'boat';
     } else {
-      vehicleType = 'jeep';
+      // On land: 8% aircraft, 8% tank, 30% motorcycle, 54% jeep
+      if (typeRoll < 0.08) {
+        vehicleType = 'aircraft';
+      } else if (typeRoll < 0.16) {
+        vehicleType = 'tank';
+      } else if (typeRoll < 0.46) {
+        vehicleType = 'motorcycle';
+      } else {
+        vehicleType = 'jeep';
+      }
     }
     spawnVehicle(vx, vz, vRotation, vehicleType);
   }
@@ -4783,6 +5413,10 @@ const quitBtn = document.getElementById('quit-btn');
 async function startGame(difficulty) {
   initAudio(); // Initialize audio on first user interaction
 
+  // Load saved XP progress
+  loadXPProgress();
+  loadAttachmentData();
+
   // Get server address from input
   const serverInput = document.getElementById('server-address');
   const connectionStatus = document.getElementById('connection-status');
@@ -4844,6 +5478,9 @@ async function startGame(difficulty) {
     // Set game mode and show appropriate HUD
     state.gameMode = state.selectedGameMode;
     updateGameModeHUD();
+
+    // Update XP bar
+    updateXPBar();
 
     // Lock pointer
     renderer.domElement.requestPointerLock();
@@ -5099,6 +5736,13 @@ document.querySelectorAll('.team-btn').forEach(btn => {
   });
 });
 
+// Graphics quality button handlers
+document.querySelectorAll('.graphics-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    applyGraphicsSettings(btn.dataset.quality);
+  });
+});
+
 // Chat system
 const chatMessages = document.getElementById('chat-messages');
 const chatInput = document.getElementById('chat-input');
@@ -5300,6 +5944,17 @@ document.addEventListener('keydown', (event) => {
       closeInventory();
     } else if (state.isPlaying && !state.isPaused) {
       openInventory();
+    }
+    return;
+  }
+
+  // L key for perk menu
+  if (event.code === 'KeyL') {
+    event.preventDefault();
+    if (state.perkMenuOpen) {
+      closePerkMenu();
+    } else if (state.isPlaying && !state.isPaused) {
+      openPerkMenu();
     }
     return;
   }
@@ -5645,24 +6300,33 @@ socket.on('enemies', (enemies) => {
 
 // Receive NPCs from server
 socket.on('npcs', (npcsData) => {
+  if (!npcsData) return;
   for (const id in npcsData) {
     const npcData = npcsData[id];
+    if (!npcData) continue;
 
     if (!state.npcs[id]) {
       // Create NPC mesh
-      const mesh = createNPCMesh(npcData);
-      scene.add(mesh);
+      try {
+        const mesh = createNPCMesh(npcData);
+        scene.add(mesh);
 
-      state.npcs[id] = {
-        mesh,
-        data: npcData
-      };
+        state.npcs[id] = {
+          mesh,
+          data: npcData
+        };
+      } catch (e) {
+        console.error('Error creating NPC mesh:', e);
+        continue;
+      }
     }
 
     // Update NPC position
     const npc = state.npcs[id];
-    npc.mesh.position.set(npcData.x, npcData.y, npcData.z);
-    npc.data = npcData;
+    if (npc && npc.mesh) {
+      npc.mesh.position.set(npcData.x, npcData.y, npcData.z);
+      npc.data = npcData;
+    }
   }
 });
 
@@ -5720,6 +6384,64 @@ socket.on('questComplete', (data) => {
       updateHealth();
     }
   }
+});
+
+// ==================== XP SOCKET HANDLERS ====================
+
+// XP gained from kills/quests
+socket.on('xpGained', (data) => {
+  state.xp = data.totalXp;
+  state.level = data.level;
+  state.nextLevelXp = data.nextLevelXp;
+
+  showXPGained(data.amount, data.reason);
+  updateXPBar();
+  saveXPProgress();
+});
+
+// Player leveled up
+socket.on('playerLevelUp', (data) => {
+  state.level = data.newLevel;
+  state.xp = data.totalXp;
+  state.nextLevelXp = data.nextLevelXp;
+
+  showLevelUp(data.newLevel, data.newPerksAvailable || []);
+  updateXPBar();
+  saveXPProgress();
+});
+
+// Perk data received
+socket.on('perksData', (data) => {
+  state.level = data.level;
+  state.xp = data.xp;
+  state.nextLevelXp = data.nextLevelXp;
+  state.perks = data.selectedPerks || [];
+
+  renderPerkMenu(data);
+  updateXPBar();
+});
+
+// Perk selected successfully
+socket.on('perkSelected', (data) => {
+  state.perks = data.allPerks;
+  showPickupMessage(`Perk Activated: ${data.perk.name}`, '#00ff00');
+  saveXPProgress();
+
+  // Refresh perk menu if open
+  if (state.perkMenuOpen) {
+    socket.emit('requestPerks');
+  }
+});
+
+// Perk selection error
+socket.on('perkError', (data) => {
+  showPickupMessage(data.message, '#ff4444');
+});
+
+// ==================== WEATHER SOCKET HANDLERS ====================
+
+socket.on('weatherChange', (data) => {
+  transitionWeather(data.weather);
 });
 
 // Create NPC mesh (friendly NPCs look different from enemies)
@@ -5783,10 +6505,12 @@ function checkNearbyNPCs() {
 
   for (const id in state.npcs) {
     const npc = state.npcs[id];
+    if (!npc || !npc.data || !npc.mesh) continue;
     if (npc.data.hostile) continue; // Can't interact with hostile NPCs
 
     const dist = camera.position.distanceTo(npc.mesh.position);
-    if (dist < npc.data.interactRange && dist < nearestDist) {
+    const interactRange = npc.data.interactRange || 5;
+    if (dist < interactRange && dist < nearestDist) {
       nearestDist = dist;
       nearestNPC = npc;
     }
@@ -5869,6 +6593,9 @@ function closeDialogue() {
     document.body.requestPointerLock();
   }
 }
+
+// Add close button event listener
+document.getElementById('dialogue-close')?.addEventListener('click', closeDialogue);
 
 // Show quest notification
 function showQuestNotification(text) {
@@ -7192,6 +7919,47 @@ const clock = new THREE.Clock();
 const cachedVehiclePrompt = document.getElementById('vehicle-prompt');
 const cachedLootPrompt = document.getElementById('loot-prompt');
 const cachedDoorPrompt = document.getElementById('door-prompt');
+const cachedFpsCounter = document.getElementById('fps-counter');
+const cachedRenderStats = document.getElementById('render-stats');
+
+// FPS tracking
+let fpsFrames = 0;
+let fpsLastTime = performance.now();
+let fpsDisplay = 0;
+
+function formatNumber(num) {
+  if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+  if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+  return num.toString();
+}
+
+function updateFpsCounter() {
+  fpsFrames++;
+  const now = performance.now();
+  const elapsed = now - fpsLastTime;
+
+  // Update every 500ms for smoother display
+  if (elapsed >= 500) {
+    fpsDisplay = Math.round((fpsFrames * 1000) / elapsed);
+    fpsFrames = 0;
+    fpsLastTime = now;
+
+    cachedFpsCounter.textContent = `FPS: ${fpsDisplay}`;
+
+    // Color code based on performance
+    cachedFpsCounter.classList.remove('low', 'medium');
+    if (fpsDisplay < 30) {
+      cachedFpsCounter.classList.add('low');
+    } else if (fpsDisplay < 50) {
+      cachedFpsCounter.classList.add('medium');
+    }
+
+    // Update render stats
+    const calls = renderer.info.render.calls;
+    const triangles = renderer.info.render.triangles;
+    cachedRenderStats.textContent = `Draw: ${calls} | Tri: ${formatNumber(triangles)}`;
+  }
+}
 
 // Throttling and cached proximity results
 let proximityCheckFrame = 0;
@@ -7203,6 +7971,7 @@ let cachedNearDoor = null;
 
 function animate() {
   requestAnimationFrame(animate);
+  updateFpsCounter();
 
   const delta = clock.getDelta();
 
@@ -7336,6 +8105,9 @@ function animate() {
   // Update day/night cycle
   updateDayNightCycle(delta);
 
+  // Update weather effects
+  updateWeather(delta);
+
   // Throttle proximity checks - only run every 5 frames
   proximityCheckFrame = (proximityCheckFrame + 1) % 5;
   if (proximityCheckFrame === 0) {
@@ -7402,7 +8174,7 @@ function animate() {
   updateDoors(delta);
 
   // Check for nearby NPCs
-  checkNearbyNPCs();
+  if (typeof checkNearbyNPCs === 'function') checkNearbyNPCs();
 
   // Throttle portal update - every 3 frames
   portalFrame = (portalFrame + 1) % 3;

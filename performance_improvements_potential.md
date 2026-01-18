@@ -16,7 +16,8 @@
 - [x] MeshLambertMaterial instead of MeshStandardMaterial for terrain
 
 ## Ready to Try
-- [ ] InstancedMesh for streetlights (in progress)
+- [x] InstancedMesh for streetlights (with day/night material toggle)
+- [x] Geometry merging for streets/lines/sidewalks (8 meshes → 3 per chunk)
 - [ ] InstancedMesh for parked cars (complex due to different types)
 
 ## If Still Slow - Additional Options

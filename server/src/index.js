@@ -17,6 +17,120 @@ const io = new Server(httpServer, {
 // Store connected players
 const players = {};
 
+// ==================== XP AND LEVELING SYSTEM ====================
+
+const XP_CONFIG = {
+  perKill: {
+    soldier: 50,
+    scout: 40,
+    heavy: 100,
+    bandit: 60,
+    wildlife: 30
+  },
+  perPlayerKill: 100,
+  perBoss: {
+    tankBoss: 500,
+    mechBoss: 400,
+    skyBoss: 350
+  },
+  perQuest: 200,
+  levelThresholds: [0, 100, 250, 500, 1000, 1750, 2750, 4000, 5500, 7500, 10000, 13000, 16500, 20500, 25000]
+};
+
+const PERKS = {
+  fastReload: { level: 2, name: 'Fast Reload', description: '20% faster reload', effect: 'reloadMult', value: 0.8 },
+  thickSkin: { level: 3, name: 'Thick Skin', description: '+25 max health', effect: 'maxHealth', value: 125 },
+  marathonRunner: { level: 4, name: 'Marathon Runner', description: '20% faster sprint', effect: 'sprintMult', value: 1.2 },
+  steadyAim: { level: 5, name: 'Steady Aim', description: '15% less spread', effect: 'spreadMult', value: 0.85 },
+  scavenger: { level: 6, name: 'Scavenger', description: '50% more ammo pickups', effect: 'ammoMult', value: 1.5 },
+  quickDraw: { level: 7, name: 'Quick Draw', description: '20% faster weapon swap', effect: 'swapMult', value: 0.8 },
+  juggernaut: { level: 8, name: 'Juggernaut', description: '15% less damage taken', effect: 'damageTaken', value: 0.85 },
+  doubleTime: { level: 10, name: 'Double Time', description: 'Sprint duration doubled', effect: 'sprintDuration', value: 2.0 }
+};
+
+// Award XP to a player
+function awardXP(playerId, amount, reason) {
+  const player = players[playerId];
+  if (!player) return;
+
+  player.xp = (player.xp || 0) + amount;
+  const oldLevel = player.level || 1;
+
+  // Calculate new level
+  let newLevel = 1;
+  for (let i = XP_CONFIG.levelThresholds.length - 1; i >= 0; i--) {
+    if (player.xp >= XP_CONFIG.levelThresholds[i]) {
+      newLevel = i + 1;
+      break;
+    }
+  }
+
+  player.level = newLevel;
+
+  // Emit XP gained event
+  io.to(playerId).emit('xpGained', {
+    amount,
+    reason,
+    totalXp: player.xp,
+    level: player.level,
+    nextLevelXp: XP_CONFIG.levelThresholds[player.level] || null
+  });
+
+  // Check for level up
+  if (newLevel > oldLevel) {
+    // Check for new perks available
+    const newPerks = [];
+    for (const [perkId, perk] of Object.entries(PERKS)) {
+      if (perk.level === newLevel) {
+        newPerks.push({ id: perkId, ...perk });
+      }
+    }
+
+    io.to(playerId).emit('playerLevelUp', {
+      newLevel,
+      previousLevel: oldLevel,
+      totalXp: player.xp,
+      nextLevelXp: XP_CONFIG.levelThresholds[newLevel] || null,
+      newPerksAvailable: newPerks
+    });
+
+    console.log(`Player ${player.name} leveled up to ${newLevel}!`);
+  }
+}
+
+// ==================== WEATHER SYSTEM ====================
+
+const WEATHER_TYPES = ['clear', 'rain', 'fog', 'sandstorm'];
+const WEATHER_DURATION = 120000; // 2 minutes per weather cycle
+
+let currentWeather = 'clear';
+let lastWeatherChange = Date.now();
+
+function changeWeather() {
+  // Pick a random weather (weighted towards clear)
+  const roll = Math.random();
+  if (roll < 0.4) {
+    currentWeather = 'clear';
+  } else if (roll < 0.6) {
+    currentWeather = 'rain';
+  } else if (roll < 0.8) {
+    currentWeather = 'fog';
+  } else {
+    currentWeather = 'sandstorm';
+  }
+
+  lastWeatherChange = Date.now();
+  io.emit('weatherChange', { weather: currentWeather });
+  console.log(`Weather changed to: ${currentWeather}`);
+}
+
+// Check weather change periodically
+setInterval(() => {
+  if (Date.now() - lastWeatherChange >= WEATHER_DURATION) {
+    changeWeather();
+  }
+}, 10000); // Check every 10 seconds
+
 // ==================== GAME MODE SYSTEM ====================
 
 const gameMode = {
@@ -132,6 +246,10 @@ function initializeGameMode(mode) {
         phase: 0,
         playersAlive: 0
       };
+      // Clear all enemies in Battle Royale - PvP only
+      for (const id in enemies) {
+        delete enemies[id];
+      }
       break;
   }
 
@@ -597,6 +715,9 @@ function getRandomSpawnNearPlayers() {
 }
 
 function spawnEnemiesNearPlayers() {
+  // No NPC spawning in Battle Royale mode
+  if (gameMode.current === 'battleroyale') return;
+
   const playerList = Object.values(players);
   if (playerList.length === 0) return;
 
@@ -650,12 +771,6 @@ function initializeEnemies() {
   spawnBosses();
 
   console.log(`Spawned ${Object.keys(enemies).length} enemies (including ${Object.keys(activeBosses).length} bosses)`);
-}
-
-function getDistance(a, b) {
-  const dx = a.x - b.x;
-  const dz = a.z - b.z;
-  return Math.sqrt(dx * dx + dz * dz);
 }
 
 function getClosestPlayer(enemy) {
@@ -950,6 +1065,12 @@ function handlePlayerDeathByBoss(playerId, enemy) {
 }
 
 function respawnEnemy(id) {
+  // No enemy respawning in Battle Royale mode
+  if (gameMode.current === 'battleroyale') {
+    delete enemies[id];
+    return;
+  }
+
   const enemy = enemies[id];
   if (!enemy) return;
 
@@ -1393,13 +1514,18 @@ io.on('connection', (socket) => {
     difficulty: 'normal',
     name: 'Player',
     team: 'none',
-    active: false  // Not active until they start game
+    active: false,  // Not active until they start game
+    // XP system
+    xp: 0,
+    level: 1,
+    perks: []
   };
 
   // Send current state to new player
   io.emit('players', players);
   socket.emit('enemies', enemies);
   socket.emit('npcs', npcs);
+  socket.emit('weatherChange', { weather: currentWeather });
 
   // Initialize player quests
   playerQuests[socket.id] = { active: [], completed: [] };
@@ -1534,6 +1660,10 @@ io.on('connection', (socket) => {
       if (dist <= AIRSTRIKE_RADIUS) {
         enemy.health -= AIRSTRIKE_DAMAGE;
         if (enemy.health <= 0) {
+          // Award XP for airstrike kill
+          const xpAmount = XP_CONFIG.perKill[enemy.type] || 50;
+          awardXP(socket.id, xpAmount, `Killed ${enemy.type}`);
+
           io.emit('enemyDeath', { enemyId: id, killerId: socket.id });
           // Respawn enemy after delay
           setTimeout(() => respawnEnemy(id), 5000);
@@ -1587,6 +1717,9 @@ io.on('connection', (socket) => {
           killerTeam: killer ? killer.team : 'none',
           isEnemyKill: false
         });
+
+        // Award XP for player kill
+        awardXP(socket.id, XP_CONFIG.perPlayerKill, `Killed ${targetPlayer.name}`);
 
         // Update deathmatch scores
         if (gameMode.current === 'deathmatch') {
@@ -1672,6 +1805,10 @@ io.on('connection', (socket) => {
 
           console.log(`BOSS DEFEATED: ${enemy.type} by ${players[socket.id]?.name}`);
 
+          // Award XP for boss kill
+          const bossXP = XP_CONFIG.perBoss[enemy.type] || 300;
+          awardXP(socket.id, bossXP, `Defeated ${enemy.type}`);
+
           // Remove boss from enemies
           delete enemies[data.enemyId];
         } else {
@@ -1680,6 +1817,10 @@ io.on('connection', (socket) => {
             enemyId: data.enemyId,
             killerId: socket.id
           });
+
+          // Award XP for enemy kill
+          const xpAmount = XP_CONFIG.perKill[enemy.type] || 50;
+          awardXP(socket.id, xpAmount, `Killed ${enemy.type}`);
 
           // Update quest progress for bandit/wildlife kills
           const pq = playerQuests[socket.id];
@@ -1706,6 +1847,9 @@ io.on('connection', (socket) => {
                       questName: quest.name,
                       rewards: quest.rewards
                     });
+
+                    // Award XP for quest completion
+                    awardXP(socket.id, XP_CONFIG.perQuest, `Completed: ${quest.name}`);
                   }
                 }
               });
@@ -1861,6 +2005,71 @@ io.on('connection', (socket) => {
         });
       }
     }
+  });
+
+  // ==================== PERK SYSTEM HANDLERS ====================
+
+  // Handle perk selection
+  socket.on('selectPerk', (data) => {
+    const player = players[socket.id];
+    if (!player) return;
+
+    const perkId = data.perkId;
+    const perk = PERKS[perkId];
+
+    if (!perk) {
+      socket.emit('perkError', { message: 'Unknown perk' });
+      return;
+    }
+
+    // Check if player meets level requirement
+    if (player.level < perk.level) {
+      socket.emit('perkError', { message: `Requires level ${perk.level}` });
+      return;
+    }
+
+    // Check if player already has this perk
+    if (player.perks.includes(perkId)) {
+      socket.emit('perkError', { message: 'Perk already selected' });
+      return;
+    }
+
+    // Add perk to player
+    player.perks.push(perkId);
+
+    socket.emit('perkSelected', {
+      perkId,
+      perk,
+      allPerks: player.perks
+    });
+
+    console.log(`Player ${player.name} selected perk: ${perk.name}`);
+  });
+
+  // Handle request for available perks
+  socket.on('requestPerks', () => {
+    const player = players[socket.id];
+    if (!player) return;
+
+    const availablePerks = {};
+    const unlockedPerks = [];
+
+    for (const [perkId, perk] of Object.entries(PERKS)) {
+      if (player.level >= perk.level) {
+        unlockedPerks.push({ id: perkId, ...perk, selected: player.perks.includes(perkId) });
+      } else {
+        availablePerks[perkId] = { ...perk, locked: true };
+      }
+    }
+
+    socket.emit('perksData', {
+      unlockedPerks,
+      lockedPerks: availablePerks,
+      selectedPerks: player.perks,
+      level: player.level,
+      xp: player.xp,
+      nextLevelXp: XP_CONFIG.levelThresholds[player.level] || null
+    });
   });
 
   // Handle player disconnect
