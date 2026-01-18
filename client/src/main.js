@@ -768,7 +768,7 @@ const state = {
   originalCameraY: 0, // Store camera Y for death animation
   lastKiller: null,
   playerName: 'Player',
-  team: 'none', // none, red, blue
+  team: 'none', // none, red, blue, green, yellow
   isChatting: false,
   // Stats
   kills: 0,
@@ -804,7 +804,27 @@ const state = {
   weaponKills: { pistol: 0, rifle: 0, shotgun: 0, sniper: 0 },
   unlockedAttachments: { pistol: [], rifle: [], shotgun: [], sniper: [] },
   equippedAttachments: { pistol: [], rifle: [], shotgun: [], sniper: [] },
-  inventoryOpen: false
+  inventoryOpen: false,
+  // Game mode
+  gameMode: 'freeplay',
+  gameModeState: {},
+  gameModeConfig: {},
+  selectedGameMode: 'freeplay',
+  // NPC system
+  npcs: {},
+  nearbyNPC: null,
+  inDialogue: false,
+  currentDialogue: null,
+  activeQuests: [],
+  completedQuests: []
+};
+
+// ==================== GAME MODE 3D OBJECTS ====================
+const gameModeObjects = {
+  kothZone: null,
+  ctfRedFlag: null,
+  ctfBlueFlag: null,
+  brCircle: null
 };
 
 // ==================== VEHICLE SYSTEM ====================
@@ -2673,7 +2693,9 @@ function collectWeaponPickup(pickup) {
 const TEAM_COLORS = {
   none: 0xf39c12,
   red: 0xe74c3c,
-  blue: 0x3498db
+  blue: 0x3498db,
+  green: 0x27ae60,
+  yellow: 0xf1c40f
 };
 
 // Difficulty multipliers
@@ -4815,8 +4837,13 @@ async function startGame(difficulty) {
     socket.emit('setPlayerInfo', {
       name: state.playerName,
       team: state.team,
-      difficulty: difficulty
+      difficulty: difficulty,
+      gameMode: state.selectedGameMode
     });
+
+    // Set game mode and show appropriate HUD
+    state.gameMode = state.selectedGameMode;
+    updateGameModeHUD();
 
     // Lock pointer
     renderer.domElement.requestPointerLock();
@@ -5042,6 +5069,23 @@ document.querySelectorAll('.difficulty-btn').forEach(btn => {
   });
 });
 
+// Game mode button handlers
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    state.selectedGameMode = btn.dataset.mode;
+
+    // Show/hide team selection based on mode
+    const teamSection = document.querySelector('.team-section');
+    if (btn.dataset.mode === 'battleroyale' || btn.dataset.mode === 'deathmatch') {
+      teamSection.style.opacity = '0.5';
+    } else {
+      teamSection.style.opacity = '1';
+    }
+  });
+});
+
 // Pause menu button handlers
 resumeBtn.addEventListener('click', resumeGame);
 quitBtn.addEventListener('click', quitToMenu);
@@ -5224,6 +5268,11 @@ document.addEventListener('keydown', (event) => {
 
   // ESC key handling
   if (event.code === 'Escape') {
+    // Close dialogue first if open
+    if (state.inDialogue) {
+      closeDialogue();
+      return;
+    }
     if (state.gameState === 'playing') {
       pauseGame();
     } else if (state.gameState === 'paused') {
@@ -5257,12 +5306,22 @@ document.addEventListener('keydown', (event) => {
 
   if (!state.isPlaying || state.isPaused) return;
 
-  // Vehicle enter/exit with E key, search loot containers, or open doors
+  // Vehicle enter/exit with E key, search loot containers, open doors, or interact with NPCs
   if (event.code === 'KeyE') {
+    // Close dialogue if open
+    if (state.inDialogue) {
+      closeDialogue();
+      return;
+    }
     if (state.inVehicle) {
       exitVehicle();
     } else {
-      // Check for door first
+      // Check for nearby NPC first
+      if (state.nearbyNPC) {
+        interactWithNPC();
+        return;
+      }
+      // Check for door
       const nearDoor = getNearestDoor(camera.position);
       if (nearDoor) {
         toggleDoor(nearDoor);
@@ -5582,6 +5641,270 @@ socket.on('enemies', (enemies) => {
   updateNearbyBoss();
 });
 
+// ==================== NPC HANDLERS ====================
+
+// Receive NPCs from server
+socket.on('npcs', (npcsData) => {
+  for (const id in npcsData) {
+    const npcData = npcsData[id];
+
+    if (!state.npcs[id]) {
+      // Create NPC mesh
+      const mesh = createNPCMesh(npcData);
+      scene.add(mesh);
+
+      state.npcs[id] = {
+        mesh,
+        data: npcData
+      };
+    }
+
+    // Update NPC position
+    const npc = state.npcs[id];
+    npc.mesh.position.set(npcData.x, npcData.y, npcData.z);
+    npc.data = npcData;
+  }
+});
+
+// NPC dialogue received
+socket.on('npcDialogue', (data) => {
+  state.inDialogue = true;
+  state.currentDialogue = {
+    npcId: data.npcId,
+    npcName: data.npcName,
+    greeting: data.greeting,
+    options: data.options
+  };
+  showDialogueBox(data);
+});
+
+// NPC response to dialogue choice
+socket.on('npcResponse', (data) => {
+  updateDialogueResponse(data.response);
+});
+
+// Quest started
+socket.on('questStarted', (data) => {
+  state.activeQuests.push(data.quest);
+  showQuestNotification(`Quest Started: ${data.quest.name}`);
+  updateQuestTracker();
+});
+
+// Quest progress
+socket.on('questProgress', (data) => {
+  const quest = state.activeQuests.find(q => q.id === data.questId);
+  if (quest) {
+    quest.objectives = data.objectives;
+    updateQuestTracker();
+  }
+});
+
+// Quest complete
+socket.on('questComplete', (data) => {
+  state.activeQuests = state.activeQuests.filter(q => q.id !== data.questId);
+  state.completedQuests.push(data.questId);
+  showQuestNotification(`Quest Complete: ${data.questName}!`);
+  updateQuestTracker();
+
+  // Show rewards
+  if (data.rewards) {
+    let rewardText = 'Rewards: ';
+    if (data.rewards.ammo) rewardText += `+${data.rewards.ammo} ammo `;
+    if (data.rewards.health) rewardText += `+${data.rewards.health} health`;
+    showPickupMessage(rewardText, '#f1c40f');
+
+    // Apply rewards
+    if (data.rewards.ammo) state.ammoReserve += data.rewards.ammo;
+    if (data.rewards.health) {
+      state.health = Math.min(state.health + data.rewards.health, 100);
+      updateHealth();
+    }
+  }
+});
+
+// Create NPC mesh (friendly NPCs look different from enemies)
+function createNPCMesh(npcData) {
+  const npcGroup = new THREE.Group();
+
+  // Body
+  const bodyGeom = new THREE.CylinderGeometry(0.4, 0.5, 1.6, 8);
+  const bodyMat = new THREE.MeshStandardMaterial({ color: npcData.color });
+  const body = new THREE.Mesh(bodyGeom, bodyMat);
+  body.position.y = 0.8;
+  npcGroup.add(body);
+
+  // Head
+  const headGeom = new THREE.SphereGeometry(0.35, 8, 8);
+  const headMat = new THREE.MeshStandardMaterial({ color: 0xffdbac }); // Skin color
+  const head = new THREE.Mesh(headGeom, headMat);
+  head.position.y = 1.9;
+  npcGroup.add(head);
+
+  // Friendly indicator (green diamond above head)
+  if (!npcData.hostile) {
+    const diamondGeom = new THREE.OctahedronGeometry(0.15);
+    const diamondMat = new THREE.MeshStandardMaterial({
+      color: 0x00ff00,
+      emissive: 0x00ff00,
+      emissiveIntensity: 0.5
+    });
+    const diamond = new THREE.Mesh(diamondGeom, diamondMat);
+    diamond.position.y = 2.5;
+    diamond.name = 'friendlyIndicator';
+    npcGroup.add(diamond);
+  }
+
+  // Name label
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = npcData.hostile ? '#ff4444' : '#44ff44';
+  ctx.font = 'bold 32px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText(npcData.name, 128, 40);
+
+  const labelTexture = new THREE.CanvasTexture(canvas);
+  const labelMat = new THREE.SpriteMaterial({ map: labelTexture, transparent: true });
+  const label = new THREE.Sprite(labelMat);
+  label.position.y = 2.8;
+  label.scale.set(2, 0.5, 1);
+  npcGroup.add(label);
+
+  return npcGroup;
+}
+
+// Check for nearby NPCs and show interaction prompt
+function checkNearbyNPCs() {
+  if (!state.isPlaying || state.isPaused || state.isDead || state.inDialogue) return;
+
+  let nearestNPC = null;
+  let nearestDist = Infinity;
+
+  for (const id in state.npcs) {
+    const npc = state.npcs[id];
+    if (npc.data.hostile) continue; // Can't interact with hostile NPCs
+
+    const dist = camera.position.distanceTo(npc.mesh.position);
+    if (dist < npc.data.interactRange && dist < nearestDist) {
+      nearestDist = dist;
+      nearestNPC = npc;
+    }
+  }
+
+  state.nearbyNPC = nearestNPC;
+
+  // Show/hide interaction prompt
+  const prompt = document.getElementById('npc-prompt');
+  if (prompt) {
+    if (nearestNPC) {
+      prompt.classList.remove('hidden');
+    } else {
+      prompt.classList.add('hidden');
+    }
+  }
+}
+
+// Interact with nearby NPC
+function interactWithNPC() {
+  if (!state.nearbyNPC || state.inDialogue) return;
+
+  socket.emit('interactNPC', { npcId: state.nearbyNPC.data.id });
+}
+
+// Show dialogue box
+function showDialogueBox(data) {
+  const box = document.getElementById('dialogue-box');
+  const nameEl = document.getElementById('npc-name');
+  const textEl = document.getElementById('dialogue-text');
+  const optionsEl = document.getElementById('dialogue-options');
+
+  if (!box) return;
+
+  nameEl.textContent = data.npcName;
+  textEl.textContent = data.greeting;
+
+  // Clear previous options
+  optionsEl.innerHTML = '';
+
+  // Add options
+  data.options.forEach((opt) => {
+    const btn = document.createElement('button');
+    btn.className = 'dialogue-option';
+    btn.textContent = opt.text;
+    btn.onclick = () => {
+      socket.emit('dialogueChoice', {
+        npcId: data.npcId,
+        optionIndex: opt.index
+      });
+    };
+    optionsEl.appendChild(btn);
+  });
+
+  box.classList.remove('hidden');
+
+  // Release pointer lock for dialogue
+  document.exitPointerLock();
+}
+
+// Update dialogue with NPC response
+function updateDialogueResponse(response) {
+  const textEl = document.getElementById('dialogue-text');
+  if (textEl) {
+    textEl.textContent = response;
+  }
+}
+
+// Close dialogue
+function closeDialogue() {
+  const box = document.getElementById('dialogue-box');
+  if (box) {
+    box.classList.add('hidden');
+  }
+  state.inDialogue = false;
+  state.currentDialogue = null;
+
+  // Re-lock pointer
+  if (state.isPlaying && !state.isPaused) {
+    document.body.requestPointerLock();
+  }
+}
+
+// Show quest notification
+function showQuestNotification(text) {
+  const notification = document.createElement('div');
+  notification.className = 'quest-notification';
+  notification.textContent = text;
+  document.body.appendChild(notification);
+
+  setTimeout(() => {
+    notification.classList.add('fade-out');
+    setTimeout(() => notification.remove(), 500);
+  }, 3000);
+}
+
+// Update quest tracker UI
+function updateQuestTracker() {
+  const tracker = document.getElementById('quest-tracker');
+  if (!tracker) return;
+
+  if (state.activeQuests.length === 0) {
+    tracker.classList.add('hidden');
+    return;
+  }
+
+  tracker.classList.remove('hidden');
+  const quest = state.activeQuests[0]; // Show first active quest
+  const nameEl = document.getElementById('quest-name');
+  const progressEl = document.getElementById('quest-progress');
+
+  if (nameEl) nameEl.textContent = quest.name;
+  if (progressEl) {
+    const obj = quest.objectives[0];
+    progressEl.textContent = `${obj.current}/${obj.count} ${obj.target}s`;
+  }
+}
+
 socket.on('playerShoot', (data) => {
   if (data.playerId === socket.id) return;
 
@@ -5848,6 +6171,378 @@ socket.on('airstrikeEffect', (data) => {
     createAirstrikeEffect(data.x, data.z);
   }
 });
+
+// ==================== GAME MODE SOCKET HANDLERS ====================
+
+socket.on('gameModeState', (data) => {
+  state.gameMode = data.mode;
+  state.gameModeState = data.state;
+  state.gameModeConfig = data.config;
+  updateGameModeHUD();
+});
+
+socket.on('gameModeChanged', (data) => {
+  state.gameMode = data.mode;
+  state.gameModeState = data.state;
+  state.gameModeConfig = data.config;
+  updateGameModeHUD();
+  showPickupMessage(`Game Mode: ${data.config.name}`, '#9b59b6');
+});
+
+socket.on('gameModeEnd', (data) => {
+  let message = '';
+  switch (data.mode) {
+    case 'deathmatch':
+      message = data.winner ? `${data.winner.name} wins!` : 'Game Over!';
+      break;
+    case 'koth':
+    case 'ctf':
+      message = `${data.winner.toUpperCase()} Team Wins!`;
+      break;
+    case 'wave':
+      message = `Game Over! Wave ${data.waveReached} reached`;
+      break;
+    case 'battleroyale':
+      message = data.winner ? `${data.winner.name} is the winner!` : 'Game Over!';
+      break;
+  }
+  showStreakNotification(message, '#ffd700', false);
+  state.gameMode = 'freeplay';
+  updateGameModeHUD();
+});
+
+// Deathmatch updates
+socket.on('dmUpdate', (data) => {
+  state.gameModeState = data;
+
+  // Update timer display
+  const totalSeconds = Math.ceil(data.timeRemaining / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  document.getElementById('dm-timer').textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+
+  // Update player's score
+  const myScore = data.scores[socket.id];
+  if (myScore) {
+    document.getElementById('dm-score').textContent = `Kills: ${myScore.kills} | Deaths: ${myScore.deaths}`;
+  }
+});
+
+// KOTH updates
+socket.on('kothUpdate', (data) => {
+  state.gameModeState = data;
+  document.getElementById('koth-red-score').textContent = data.scores.red;
+  document.getElementById('koth-blue-score').textContent = data.scores.blue;
+  document.getElementById('koth-green-score').textContent = data.scores.green;
+  document.getElementById('koth-yellow-score').textContent = data.scores.yellow;
+  const status = document.getElementById('koth-status');
+  if (data.contested) {
+    status.textContent = 'CONTESTED';
+    status.className = 'contested';
+  } else if (data.controlling) {
+    status.textContent = `${data.controlling.toUpperCase()} Control`;
+    status.className = data.controlling;
+  } else {
+    status.textContent = 'Neutral';
+    status.className = '';
+  }
+  // Update 3D zone color
+  if (gameModeObjects.kothZone) {
+    updateKOTHZone();
+  }
+});
+
+// CTF updates (alliance system: Red+Green vs Blue+Yellow)
+socket.on('ctfUpdate', (data) => {
+  state.gameModeState = data;
+  document.getElementById('ctf-redgreen-score').textContent = data.scores.redgreen;
+  document.getElementById('ctf-blueyellow-score').textContent = data.scores.blueyellow;
+  // Update 3D flag positions
+  if (gameModeObjects.ctfRedgreenFlag || gameModeObjects.ctfBlueyellowFlag) {
+    updateCTFFlags();
+  }
+});
+
+socket.on('flagPickup', (data) => {
+  const isRedGreen = data.team === 'redgreen';
+  const teamLabel = isRedGreen ? 'RED+GREEN' : 'BLUE+YELLOW';
+  const color = isRedGreen ? '#e74c3c' : '#3498db';
+  showPickupMessage(`${data.carrierName} has the ${teamLabel} flag!`, color);
+});
+
+socket.on('flagCapture', (data) => {
+  const isRedGreen = data.team === 'redgreen';
+  const teamLabel = isRedGreen ? 'RED+GREEN' : 'BLUE+YELLOW';
+  const color = isRedGreen ? '#e74c3c' : '#3498db';
+  showStreakNotification(`${teamLabel} SCORES!`, color, false);
+});
+
+socket.on('flagDrop', (data) => {
+  const isRedGreen = data.team === 'redgreen';
+  const teamLabel = isRedGreen ? 'RED+GREEN' : 'BLUE+YELLOW';
+  const color = isRedGreen ? '#e74c3c' : '#3498db';
+  showPickupMessage(`${teamLabel} flag dropped!`, color);
+});
+
+// Wave updates
+socket.on('waveUpdate', (data) => {
+  state.gameModeState = data;
+  document.getElementById('wave-number').textContent = `WAVE ${data.waveNumber}`;
+  document.getElementById('wave-enemies').textContent = `Enemies: ${data.enemiesRemaining}`;
+  const timer = document.getElementById('wave-timer');
+  if (data.breakTimeRemaining > 0) {
+    timer.classList.remove('hidden');
+    timer.textContent = `Next wave: ${Math.ceil(data.breakTimeRemaining / 1000)}s`;
+  } else {
+    timer.classList.add('hidden');
+  }
+});
+
+socket.on('waveStart', (data) => {
+  showStreakNotification(`WAVE ${data.waveNumber}`, '#e74c3c', false);
+});
+
+socket.on('waveComplete', (data) => {
+  showPickupMessage(`Wave ${data.waveNumber} Complete!`, '#27ae60');
+});
+
+// Battle Royale updates
+socket.on('brUpdate', (data) => {
+  state.gameModeState = data;
+  document.getElementById('br-alive').textContent = `Alive: ${data.playersAlive}`;
+  document.getElementById('br-phase').textContent = `Phase ${data.phase}`;
+
+  // Check if player is outside zone
+  const dist = Math.sqrt(
+    Math.pow(camera.position.x - data.center.x, 2) +
+    Math.pow(camera.position.z - data.center.z, 2)
+  );
+  const warning = document.getElementById('br-warning');
+  if (dist > data.currentRadius) {
+    warning.classList.remove('hidden');
+  } else {
+    warning.classList.add('hidden');
+  }
+
+  // Update 3D circle
+  updateBRCircle();
+});
+
+socket.on('brShrink', (data) => {
+  showPickupMessage(`Circle shrinking! Phase ${data.phase}`, '#3498db');
+});
+
+// ==================== GAME MODE HUD FUNCTIONS ====================
+
+function updateGameModeHUD() {
+  const gamemodeHud = document.getElementById('gamemode-hud');
+  const dmHud = document.getElementById('dm-hud');
+  const kothHud = document.getElementById('koth-hud');
+  const ctfHud = document.getElementById('ctf-hud');
+  const waveHud = document.getElementById('wave-hud');
+  const brHud = document.getElementById('br-hud');
+
+  // Hide all mode HUDs
+  dmHud.classList.add('hidden');
+  kothHud.classList.add('hidden');
+  ctfHud.classList.add('hidden');
+  waveHud.classList.add('hidden');
+  brHud.classList.add('hidden');
+
+  if (state.gameMode === 'freeplay') {
+    gamemodeHud.classList.add('hidden');
+    return;
+  }
+
+  gamemodeHud.classList.remove('hidden');
+
+  switch (state.gameMode) {
+    case 'deathmatch':
+      dmHud.classList.remove('hidden');
+      break;
+    case 'koth':
+      kothHud.classList.remove('hidden');
+      break;
+    case 'ctf':
+      ctfHud.classList.remove('hidden');
+      break;
+    case 'wave':
+      waveHud.classList.remove('hidden');
+      break;
+    case 'battleroyale':
+      brHud.classList.remove('hidden');
+      break;
+  }
+
+  // Update 3D game mode objects
+  updateGameMode3D();
+}
+
+// ==================== GAME MODE 3D RENDERING ====================
+
+function updateGameMode3D() {
+  // Clean up old objects if mode changed
+  if (state.gameMode !== 'koth' && gameModeObjects.kothZone) {
+    scene.remove(gameModeObjects.kothZone);
+    gameModeObjects.kothZone = null;
+  }
+  if (state.gameMode !== 'ctf') {
+    if (gameModeObjects.ctfRedFlag) {
+      scene.remove(gameModeObjects.ctfRedFlag);
+      gameModeObjects.ctfRedFlag = null;
+    }
+    if (gameModeObjects.ctfBlueFlag) {
+      scene.remove(gameModeObjects.ctfBlueFlag);
+      gameModeObjects.ctfBlueFlag = null;
+    }
+  }
+  if (state.gameMode !== 'battleroyale' && gameModeObjects.brCircle) {
+    scene.remove(gameModeObjects.brCircle);
+    gameModeObjects.brCircle = null;
+  }
+
+  // Create/update objects for current mode
+  switch (state.gameMode) {
+    case 'koth':
+      updateKOTHZone();
+      break;
+    case 'ctf':
+      updateCTFFlags();
+      break;
+    case 'battleroyale':
+      updateBRCircle();
+      break;
+  }
+}
+
+function updateKOTHZone() {
+  if (!state.gameModeConfig || !state.gameModeConfig.zonePosition) return;
+
+  const zoneX = state.gameModeConfig.zonePosition.x;
+  const zoneZ = state.gameModeConfig.zonePosition.z;
+  const zoneRadius = state.gameModeConfig.zoneRadius;
+
+  // Create zone if it doesn't exist
+  if (!gameModeObjects.kothZone) {
+    const ringGeo = new THREE.RingGeometry(zoneRadius - 0.5, zoneRadius, 64);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.5,
+      side: THREE.DoubleSide
+    });
+    gameModeObjects.kothZone = new THREE.Mesh(ringGeo, ringMat);
+    gameModeObjects.kothZone.rotation.x = -Math.PI / 2;
+    gameModeObjects.kothZone.position.set(zoneX, 0.1, zoneZ);
+    scene.add(gameModeObjects.kothZone);
+  }
+
+  // Update zone color based on control
+  let color = 0xffffff; // Neutral white
+  if (state.gameModeState.controllingTeam === 'red') {
+    color = 0xe74c3c;
+  } else if (state.gameModeState.controllingTeam === 'blue') {
+    color = 0x3498db;
+  } else if (state.gameModeState.contested) {
+    color = 0xf39c12; // Contested yellow
+  }
+  gameModeObjects.kothZone.material.color.setHex(color);
+}
+
+function createFlagMesh(color) {
+  const flagGroup = new THREE.Group();
+
+  // Pole
+  const poleGeo = new THREE.CylinderGeometry(0.1, 0.1, 4, 8);
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
+  const pole = new THREE.Mesh(poleGeo, poleMat);
+  pole.position.y = 2;
+  flagGroup.add(pole);
+
+  // Flag cloth
+  const flagGeo = new THREE.PlaneGeometry(2, 1.2);
+  const flagMat = new THREE.MeshStandardMaterial({
+    color: color,
+    side: THREE.DoubleSide,
+    emissive: color,
+    emissiveIntensity: 0.3
+  });
+  const flag = new THREE.Mesh(flagGeo, flagMat);
+  flag.position.set(1, 3.4, 0);
+  flagGroup.add(flag);
+
+  return flagGroup;
+}
+
+function updateCTFFlags() {
+  if (!state.gameModeConfig || !state.gameModeState) return;
+
+  const redBase = state.gameModeConfig.redBase;
+  const blueBase = state.gameModeConfig.blueBase;
+
+  // Create flags if they don't exist (Red+Green alliance flag at red base, Blue+Yellow at blue base)
+  if (!gameModeObjects.ctfRedgreenFlag) {
+    gameModeObjects.ctfRedgreenFlag = createFlagMesh(0xe74c3c);
+    scene.add(gameModeObjects.ctfRedgreenFlag);
+  }
+  if (!gameModeObjects.ctfBlueyellowFlag) {
+    gameModeObjects.ctfBlueyellowFlag = createFlagMesh(0x3498db);
+    scene.add(gameModeObjects.ctfBlueyellowFlag);
+  }
+
+  // Update flag positions
+  if (state.gameModeState.redgreenFlag) {
+    const rf = state.gameModeState.redgreenFlag;
+    if (rf.atBase) {
+      gameModeObjects.ctfRedgreenFlag.position.set(redBase.x, 0, redBase.z);
+    } else {
+      gameModeObjects.ctfRedgreenFlag.position.set(rf.position.x, 0, rf.position.z);
+    }
+    gameModeObjects.ctfRedgreenFlag.visible = true;
+  }
+
+  if (state.gameModeState.blueyellowFlag) {
+    const bf = state.gameModeState.blueyellowFlag;
+    if (bf.atBase) {
+      gameModeObjects.ctfBlueyellowFlag.position.set(blueBase.x, 0, blueBase.z);
+    } else {
+      gameModeObjects.ctfBlueyellowFlag.position.set(bf.position.x, 0, bf.position.z);
+    }
+    gameModeObjects.ctfBlueyellowFlag.visible = true;
+  }
+}
+
+function updateBRCircle() {
+  if (!state.gameModeState || !state.gameModeState.center) return;
+
+  const center = state.gameModeState.center;
+  const currentRadius = state.gameModeState.currentRadius;
+
+  // Create or update circle
+  if (!gameModeObjects.brCircle) {
+    const circleGeo = new THREE.RingGeometry(currentRadius - 1, currentRadius, 128);
+    const circleMat = new THREE.MeshBasicMaterial({
+      color: 0x3498db,
+      transparent: true,
+      opacity: 0.4,
+      side: THREE.DoubleSide
+    });
+    gameModeObjects.brCircle = new THREE.Mesh(circleGeo, circleMat);
+    gameModeObjects.brCircle.rotation.x = -Math.PI / 2;
+    gameModeObjects.brCircle.position.set(center.x, 0.2, center.z);
+    scene.add(gameModeObjects.brCircle);
+  } else {
+    // Update radius by creating new geometry
+    const oldGeo = gameModeObjects.brCircle.geometry;
+    gameModeObjects.brCircle.geometry = new THREE.RingGeometry(
+      Math.max(0, currentRadius - 1),
+      currentRadius,
+      128
+    );
+    oldGeo.dispose();
+    gameModeObjects.brCircle.position.set(center.x, 0.2, center.z);
+  }
+}
 
 // Visual effects for boss special attacks
 function createGroundSlamEffect(x, z, radius) {
@@ -6120,6 +6815,128 @@ function updateMinimap() {
     const mapY = MINIMAP_CENTER - (rotatedZ / MINIMAP_RANGE) * MINIMAP_SIZE;
 
     return { x: mapX, y: mapY };
+  }
+
+  // Draw game mode zones
+  if (state.gameMode === 'koth' && state.gameModeConfig) {
+    // King of the Hill zone
+    const zonePos = worldToMinimap(
+      state.gameModeConfig.zonePosition.x,
+      state.gameModeConfig.zonePosition.z
+    );
+    const zoneRadius = (state.gameModeConfig.zoneRadius / MINIMAP_RANGE) * MINIMAP_SIZE;
+
+    // Zone color based on control
+    let zoneColor = 'rgba(255, 255, 255, 0.3)'; // Neutral
+    if (state.gameModeState.controllingTeam === 'red') {
+      zoneColor = 'rgba(231, 76, 60, 0.4)';
+    } else if (state.gameModeState.controllingTeam === 'blue') {
+      zoneColor = 'rgba(52, 152, 219, 0.4)';
+    } else if (state.gameModeState.contested) {
+      zoneColor = 'rgba(243, 156, 18, 0.4)';
+    }
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(zonePos.x, zonePos.y, zoneRadius, 0, Math.PI * 2);
+    ctx.fillStyle = zoneColor;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  if (state.gameMode === 'ctf' && state.gameModeState) {
+    // Draw flag bases and current flag positions
+    const redBase = worldToMinimap(
+      state.gameModeConfig.redBase.x,
+      state.gameModeConfig.redBase.z
+    );
+    const blueBase = worldToMinimap(
+      state.gameModeConfig.blueBase.x,
+      state.gameModeConfig.blueBase.z
+    );
+
+    // Draw base markers
+    ctx.save();
+    // Red base
+    ctx.beginPath();
+    ctx.arc(redBase.x, redBase.y, 8, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(231, 76, 60, 0.5)';
+    ctx.fill();
+    ctx.strokeStyle = '#e74c3c';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Blue base
+    ctx.beginPath();
+    ctx.arc(blueBase.x, blueBase.y, 8, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(52, 152, 219, 0.5)';
+    ctx.fill();
+    ctx.strokeStyle = '#3498db';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Draw flags if they're not at base
+    if (state.gameModeState.redFlag && !state.gameModeState.redFlag.atBase) {
+      const flagPos = worldToMinimap(
+        state.gameModeState.redFlag.position.x,
+        state.gameModeState.redFlag.position.z
+      );
+      ctx.fillStyle = '#e74c3c';
+      ctx.beginPath();
+      ctx.moveTo(flagPos.x, flagPos.y - 6);
+      ctx.lineTo(flagPos.x + 5, flagPos.y - 3);
+      ctx.lineTo(flagPos.x, flagPos.y);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    if (state.gameModeState.blueFlag && !state.gameModeState.blueFlag.atBase) {
+      const flagPos = worldToMinimap(
+        state.gameModeState.blueFlag.position.x,
+        state.gameModeState.blueFlag.position.z
+      );
+      ctx.fillStyle = '#3498db';
+      ctx.beginPath();
+      ctx.moveTo(flagPos.x, flagPos.y - 6);
+      ctx.lineTo(flagPos.x + 5, flagPos.y - 3);
+      ctx.lineTo(flagPos.x, flagPos.y);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  if (state.gameMode === 'battleroyale' && state.gameModeState) {
+    // Battle Royale circle
+    const centerPos = worldToMinimap(
+      state.gameModeState.center.x,
+      state.gameModeState.center.z
+    );
+    const currentRadius = (state.gameModeState.currentRadius / MINIMAP_RANGE) * MINIMAP_SIZE;
+    const targetRadius = (state.gameModeState.targetRadius / MINIMAP_RANGE) * MINIMAP_SIZE;
+
+    ctx.save();
+    // Draw target radius (thinner, dashed)
+    if (targetRadius < currentRadius) {
+      ctx.beginPath();
+      ctx.arc(centerPos.x, centerPos.y, targetRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Draw current radius
+    ctx.beginPath();
+    ctx.arc(centerPos.x, centerPos.y, currentRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = '#3498db';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
   }
 
   // Draw vehicles (jeeps gray, motorcycles orange)
@@ -6583,6 +7400,9 @@ function animate() {
 
   // Update doors (animation)
   updateDoors(delta);
+
+  // Check for nearby NPCs
+  checkNearbyNPCs();
 
   // Throttle portal update - every 3 frames
   portalFrame = (portalFrame + 1) % 3;

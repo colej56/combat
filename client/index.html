@@ -382,6 +382,50 @@
       border-color: #3498db;
       background: rgba(52, 152, 219, 0.3);
     }
+    .team-btn.green-team.selected {
+      border-color: #27ae60;
+      background: rgba(39, 174, 96, 0.3);
+    }
+    .team-btn.yellow-team.selected {
+      border-color: #f1c40f;
+      background: rgba(241, 196, 15, 0.3);
+    }
+
+    /* Game Mode Selection */
+    .mode-section {
+      margin-bottom: 25px;
+    }
+    .mode-section label {
+      display: block;
+      font-size: 14px;
+      color: #888;
+      margin-bottom: 10px;
+    }
+    .mode-buttons {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .mode-btn {
+      padding: 10px 8px;
+      font-size: 11px;
+      font-weight: bold;
+      border: 2px solid #555;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.5);
+      color: #aaa;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .mode-btn:hover {
+      border-color: #888;
+      color: white;
+    }
+    .mode-btn.selected {
+      border-color: #9b59b6;
+      color: white;
+      background: rgba(155, 89, 182, 0.3);
+    }
 
     /* Pause Menu */
     #pause-menu {
@@ -626,6 +670,12 @@
     .chat-message .name.blue-team {
       color: #3498db;
     }
+    .chat-message .name.green-team {
+      color: #27ae60;
+    }
+    .chat-message .name.yellow-team {
+      color: #f1c40f;
+    }
     .chat-message .name.solo {
       color: #f39c12;
     }
@@ -685,11 +735,23 @@
     .kill-entry .killer.blue-team {
       color: #3498db;
     }
+    .kill-entry .killer.green-team {
+      color: #27ae60;
+    }
+    .kill-entry .killer.yellow-team {
+      color: #f1c40f;
+    }
     .kill-entry .victim.red-team {
       color: #ff6b6b;
     }
     .kill-entry .victim.blue-team {
       color: #74b9ff;
+    }
+    .kill-entry .victim.green-team {
+      color: #58d68d;
+    }
+    .kill-entry .victim.yellow-team {
+      color: #f7dc6f;
     }
 
     /* Vehicle HUD */
@@ -1093,6 +1155,96 @@
       100% { transform: translateX(-50%) scale(1); opacity: 1; }
     }
 
+    /* Game Mode HUD */
+    #gamemode-hud {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      z-index: 100;
+    }
+    .mode-hud {
+      background: rgba(0, 0, 0, 0.7);
+      border: 2px solid #555;
+      border-radius: 10px;
+      padding: 10px 20px;
+      font-size: 16px;
+      font-weight: bold;
+    }
+    /* Deathmatch */
+    #dm-timer {
+      font-size: 28px;
+      color: #f39c12;
+    }
+    #dm-score {
+      font-size: 14px;
+      color: #aaa;
+    }
+    /* KOTH */
+    #koth-scores {
+      font-size: 18px;
+    }
+    .koth-red { color: #e74c3c; }
+    .koth-blue { color: #3498db; }
+    .koth-green { color: #27ae60; }
+    .koth-yellow { color: #f1c40f; }
+    .koth-divider { color: #666; margin: 0 10px; }
+    #koth-status {
+      font-size: 14px;
+      color: #aaa;
+      margin-top: 5px;
+    }
+    #koth-status.contested { color: #f39c12; }
+    #koth-status.red { color: #e74c3c; }
+    #koth-status.blue { color: #3498db; }
+    #koth-status.green { color: #27ae60; }
+    #koth-status.yellow { color: #f1c40f; }
+    /* CTF */
+    #ctf-scores {
+      font-size: 20px;
+    }
+    .ctf-redgreen { color: #e74c3c; }
+    .ctf-blueyellow { color: #3498db; }
+    .ctf-divider { color: #666; margin: 0 15px; }
+    #ctf-status {
+      font-size: 14px;
+      color: #f39c12;
+      margin-top: 5px;
+    }
+    /* Wave Survival */
+    #wave-number {
+      font-size: 24px;
+      color: #e74c3c;
+    }
+    #wave-enemies {
+      font-size: 14px;
+      color: #aaa;
+    }
+    #wave-timer {
+      font-size: 16px;
+      color: #27ae60;
+      margin-top: 5px;
+    }
+    /* Battle Royale */
+    #br-alive {
+      font-size: 20px;
+      color: #3498db;
+    }
+    #br-phase {
+      font-size: 14px;
+      color: #aaa;
+    }
+    #br-warning {
+      font-size: 18px;
+      color: #e74c3c;
+      animation: brWarning 0.5s infinite;
+    }
+    @keyframes brWarning {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
     /* Scoreboard */
     #scoreboard {
       position: absolute;
@@ -1152,6 +1304,12 @@
     }
     #scoreboard .player-name.blue-team {
       color: #3498db;
+    }
+    #scoreboard .player-name.green-team {
+      color: #27ae60;
+    }
+    #scoreboard .player-name.yellow-team {
+      color: #f1c40f;
     }
     #scoreboard .player-name.solo {
       color: #f39c12;
@@ -1318,6 +1476,145 @@
     #attachment-unlock.hidden {
       display: none;
     }
+
+    /* NPC Interaction Prompt */
+    #npc-prompt {
+      position: absolute;
+      bottom: 150px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.7);
+      padding: 10px 20px;
+      border-radius: 5px;
+      color: white;
+      font-size: 16px;
+      pointer-events: none;
+    }
+    #npc-prompt span {
+      color: #f1c40f;
+      font-weight: bold;
+    }
+    #npc-prompt.hidden {
+      display: none;
+    }
+
+    /* Dialogue Box */
+    #dialogue-box {
+      position: absolute;
+      bottom: 100px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(20, 20, 30, 0.95);
+      border: 2px solid #27ae60;
+      border-radius: 10px;
+      padding: 20px;
+      min-width: 400px;
+      max-width: 500px;
+      z-index: 1000;
+    }
+    #dialogue-box.hidden {
+      display: none;
+    }
+    #npc-name {
+      color: #27ae60;
+      font-size: 20px;
+      font-weight: bold;
+      margin-bottom: 10px;
+      border-bottom: 1px solid #27ae60;
+      padding-bottom: 5px;
+    }
+    #dialogue-text {
+      color: white;
+      font-size: 16px;
+      line-height: 1.5;
+      margin-bottom: 15px;
+    }
+    #dialogue-options {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .dialogue-option {
+      background: rgba(39, 174, 96, 0.2);
+      border: 1px solid #27ae60;
+      color: white;
+      padding: 10px 15px;
+      font-size: 14px;
+      cursor: pointer;
+      border-radius: 5px;
+      text-align: left;
+      transition: all 0.2s;
+    }
+    .dialogue-option:hover {
+      background: rgba(39, 174, 96, 0.5);
+      border-color: #2ecc71;
+    }
+    #dialogue-close {
+      margin-top: 15px;
+      background: rgba(100, 100, 100, 0.3);
+      border: 1px solid #666;
+      color: #aaa;
+      padding: 8px 15px;
+      font-size: 12px;
+      cursor: pointer;
+      border-radius: 5px;
+    }
+    #dialogue-close:hover {
+      background: rgba(100, 100, 100, 0.5);
+      color: white;
+    }
+
+    /* Quest Tracker */
+    #quest-tracker {
+      position: absolute;
+      top: 100px;
+      right: 20px;
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid #f1c40f;
+      border-radius: 5px;
+      padding: 10px 15px;
+      min-width: 200px;
+    }
+    #quest-tracker.hidden {
+      display: none;
+    }
+    #quest-name {
+      color: #f1c40f;
+      font-size: 14px;
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+    #quest-progress {
+      color: #aaa;
+      font-size: 12px;
+    }
+
+    /* Quest Notification */
+    .quest-notification {
+      position: fixed;
+      top: 200px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(241, 196, 15, 0.9);
+      color: black;
+      padding: 15px 30px;
+      border-radius: 5px;
+      font-size: 18px;
+      font-weight: bold;
+      z-index: 1000;
+      animation: questFadeIn 0.5s ease-out;
+    }
+    .quest-notification.fade-out {
+      animation: questFadeOut 0.5s ease-out forwards;
+    }
+    @keyframes questFadeIn {
+      from { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+      to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+    @keyframes questFadeOut {
+      from { opacity: 1; transform: translateX(-50%) translateY(0); }
+      to { opacity: 0; transform: translateX(-50%) translateY(20px); }
+    }
   </style>
 </head>
 <body>
@@ -1370,6 +1667,53 @@
 
     <!-- Kill Feed -->
     <div id="kill-feed"></div>
+
+    <!-- Game Mode HUDs -->
+    <div id="gamemode-hud" class="hidden">
+      <!-- Deathmatch HUD -->
+      <div id="dm-hud" class="mode-hud hidden">
+        <div id="dm-timer">5:00</div>
+        <div id="dm-score">Score: 0</div>
+      </div>
+
+      <!-- King of the Hill HUD -->
+      <div id="koth-hud" class="mode-hud hidden">
+        <div id="koth-scores">
+          <span class="koth-red">RED: <span id="koth-red-score">0</span></span>
+          <span class="koth-divider">|</span>
+          <span class="koth-blue">BLUE: <span id="koth-blue-score">0</span></span>
+          <span class="koth-divider">|</span>
+          <span class="koth-green">GRN: <span id="koth-green-score">0</span></span>
+          <span class="koth-divider">|</span>
+          <span class="koth-yellow">YEL: <span id="koth-yellow-score">0</span></span>
+        </div>
+        <div id="koth-status">Neutral</div>
+      </div>
+
+      <!-- Capture the Flag HUD (Alliance: Red+Green vs Blue+Yellow) -->
+      <div id="ctf-hud" class="mode-hud hidden">
+        <div id="ctf-scores">
+          <span class="ctf-redgreen">RED+GRN: <span id="ctf-redgreen-score">0</span></span>
+          <span class="ctf-divider">-</span>
+          <span class="ctf-blueyellow">BLU+YEL: <span id="ctf-blueyellow-score">0</span></span>
+        </div>
+        <div id="ctf-status"></div>
+      </div>
+
+      <!-- Wave Survival HUD -->
+      <div id="wave-hud" class="mode-hud hidden">
+        <div id="wave-number">WAVE 1</div>
+        <div id="wave-enemies">Enemies: 0</div>
+        <div id="wave-timer" class="hidden">Next wave: 10s</div>
+      </div>
+
+      <!-- Battle Royale HUD -->
+      <div id="br-hud" class="mode-hud hidden">
+        <div id="br-alive">Alive: 0</div>
+        <div id="br-phase">Phase 1</div>
+        <div id="br-warning" class="hidden">OUTSIDE ZONE!</div>
+      </div>
+    </div>
 
     <!-- Vehicle HUD -->
     <div id="vehicle-hud" class="hidden">
@@ -1439,6 +1783,20 @@
           <button class="team-btn selected" data-team="none">Solo</button>
           <button class="team-btn red-team" data-team="red">Red Team</button>
           <button class="team-btn blue-team" data-team="blue">Blue Team</button>
+          <button class="team-btn green-team" data-team="green">Green Team</button>
+          <button class="team-btn yellow-team" data-team="yellow">Yellow Team</button>
+        </div>
+      </div>
+
+      <div class="mode-section">
+        <label>Game Mode</label>
+        <div class="mode-buttons">
+          <button class="mode-btn selected" data-mode="freeplay">Free Play</button>
+          <button class="mode-btn" data-mode="deathmatch">Deathmatch</button>
+          <button class="mode-btn" data-mode="koth">King of Hill</button>
+          <button class="mode-btn" data-mode="ctf">Capture Flag</button>
+          <button class="mode-btn" data-mode="wave">Wave Survival</button>
+          <button class="mode-btn" data-mode="battleroyale">Battle Royale</button>
         </div>
       </div>
 
@@ -1521,6 +1879,25 @@
 
     <!-- Attachment Unlock Notification -->
     <div id="attachment-unlock" class="hidden"></div>
+
+    <!-- NPC Interaction Prompt -->
+    <div id="npc-prompt" class="hidden">
+      Press <span>E</span> to talk
+    </div>
+
+    <!-- Dialogue Box -->
+    <div id="dialogue-box" class="hidden">
+      <div id="npc-name"></div>
+      <div id="dialogue-text"></div>
+      <div id="dialogue-options"></div>
+      <button id="dialogue-close" onclick="closeDialogue()">Close [ESC]</button>
+    </div>
+
+    <!-- Quest Tracker -->
+    <div id="quest-tracker" class="hidden">
+      <div id="quest-name"></div>
+      <div id="quest-progress"></div>
+    </div>
   </div>
   <script type="module" src="/src/main.js"></script>
 </body>

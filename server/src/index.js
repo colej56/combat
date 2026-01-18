@@ -17,6 +17,134 @@ const io = new Server(httpServer, {
 // Store connected players
 const players = {};
 
+// ==================== GAME MODE SYSTEM ====================
+
+const gameMode = {
+  current: 'freeplay', // freeplay, ctf, wave, koth, deathmatch, battleroyale
+  state: {},
+  startTime: null,
+  endTime: null
+};
+
+const GAME_MODE_CONFIG = {
+  freeplay: {
+    name: 'Free Play',
+    description: 'No objectives, just explore and fight'
+  },
+  ctf: {
+    name: 'Capture the Flag',
+    scoreToWin: 3,
+    flagReturnTime: 30000,
+    redBase: { x: -100, z: 0 },
+    blueBase: { x: 100, z: 0 }
+  },
+  wave: {
+    name: 'Wave Survival',
+    waveBreakTime: 10000,
+    baseEnemyCount: 5,
+    enemyMultiplier: 1.5
+  },
+  koth: {
+    name: 'King of the Hill',
+    pointsToWin: 100,
+    zoneRadius: 15,
+    zonePosition: { x: 0, z: 0 },
+    pointsPerSecond: 1
+  },
+  deathmatch: {
+    name: 'Deathmatch',
+    duration: 300000 // 5 minutes
+  },
+  battleroyale: {
+    name: 'Battle Royale',
+    shrinkInterval: 60000,
+    shrinkAmount: 30,
+    damagePerSecond: 5,
+    initialRadius: 200,
+    minRadius: 10,
+    center: { x: 0, z: 0 }
+  }
+};
+
+// Initialize a game mode
+function initializeGameMode(mode) {
+  if (!GAME_MODE_CONFIG[mode]) return;
+
+  gameMode.current = mode;
+  gameMode.startTime = Date.now();
+  gameMode.endTime = null;
+
+  switch (mode) {
+    case 'freeplay':
+      gameMode.state = {};
+      break;
+
+    case 'deathmatch':
+      gameMode.state = {
+        endTime: Date.now() + GAME_MODE_CONFIG.deathmatch.duration,
+        scores: {}
+      };
+      // Initialize scores for active players
+      for (const id in players) {
+        if (players[id].active) {
+          gameMode.state.scores[id] = { kills: 0, deaths: 0, name: players[id].name };
+        }
+      }
+      break;
+
+    case 'koth':
+      gameMode.state = {
+        scores: { red: 0, blue: 0, green: 0, yellow: 0 },
+        controllingTeam: null,
+        contested: false,
+        lastTick: Date.now()
+      };
+      break;
+
+    case 'ctf':
+      // 2v2 alliance system: Red+Green vs Blue+Yellow
+      gameMode.state = {
+        redgreenFlag: { position: { ...GAME_MODE_CONFIG.ctf.redBase }, carrier: null, atBase: true },
+        blueyellowFlag: { position: { ...GAME_MODE_CONFIG.ctf.blueBase }, carrier: null, atBase: true },
+        scores: { redgreen: 0, blueyellow: 0 }
+      };
+      break;
+
+    case 'wave':
+      gameMode.state = {
+        waveNumber: 0,
+        enemiesRemaining: 0,
+        inWave: false,
+        waveBreakEndTime: Date.now() + 5000
+      };
+      // Clear existing enemies for wave mode
+      for (const id in enemies) {
+        delete enemies[id];
+      }
+      break;
+
+    case 'battleroyale':
+      gameMode.state = {
+        currentRadius: GAME_MODE_CONFIG.battleroyale.initialRadius,
+        targetRadius: GAME_MODE_CONFIG.battleroyale.initialRadius,
+        center: { ...GAME_MODE_CONFIG.battleroyale.center },
+        lastShrink: Date.now(),
+        phase: 0,
+        playersAlive: 0
+      };
+      break;
+  }
+
+  console.log(`Game mode initialized: ${GAME_MODE_CONFIG[mode].name}`);
+}
+
+// Get distance between two points
+function getDistance(a, b) {
+  const dx = a.x - b.x;
+  const dz = a.z - b.z;
+  return Math.sqrt(dx * dx + dz * dz);
+}
+
 // ==================== AI ENEMY SYSTEM ====================
 
 const ENEMY_TYPES = {
@@ -48,6 +176,27 @@ const ENEMY_TYPES = {
     detectRange: 40,
     attackCooldown: 1500,
     color: 0x990000,
+    isBoss: false
+  },
+  // HOSTILE NPC TYPES (for quests)
+  bandit: {
+    health: 80,
+    damage: 12,
+    speed: 6,
+    attackRange: 25,
+    detectRange: 45,
+    attackCooldown: 1200,
+    color: 0x884400,
+    isBoss: false
+  },
+  wildlife: {
+    health: 50,
+    damage: 15,
+    speed: 10,
+    attackRange: 8,
+    detectRange: 35,
+    attackCooldown: 800,
+    color: 0x555555,
     isBoss: false
   },
   // BOSS TYPES
@@ -102,6 +251,116 @@ const BOSS_SPAWNS = [
 
 // Track active bosses
 const activeBosses = {};
+
+// ==================== NPC SYSTEM ====================
+
+const NPC_TYPES = {
+  merchant: {
+    name: 'Merchant',
+    color: 0x00aa00,
+    hostile: false,
+    questGiver: true,
+    interactRange: 5
+  },
+  survivor: {
+    name: 'Survivor',
+    color: 0x0088ff,
+    hostile: false,
+    questGiver: false,
+    interactRange: 5
+  },
+  bandit: {
+    name: 'Bandit',
+    color: 0x884400,
+    hostile: true,
+    health: 80,
+    damage: 12,
+    speed: 6,
+    attackRange: 25,
+    detectRange: 45,
+    attackCooldown: 1200
+  },
+  wildlife: {
+    name: 'Wolf',
+    color: 0x555555,
+    hostile: true,
+    health: 50,
+    damage: 15,
+    speed: 10,
+    attackRange: 8,
+    detectRange: 35,
+    attackCooldown: 800
+  }
+};
+
+const NPC_DIALOGUES = {
+  merchant: {
+    greeting: ["Welcome, traveler!", "Looking for supplies?", "I've got what you need."],
+    options: [
+      { text: "What do you sell?", response: "Ammo, weapons, medical supplies. All at fair prices." },
+      { text: "Any work available?", response: "There's a bandit camp nearby causing trouble. Clear them out and I'll make it worth your while.", triggersQuest: 'clear_bandits' },
+      { text: "What's the situation here?", response: "Dangerous times. Bandits everywhere, and wildlife gone feral. Stay alert out there." },
+      { text: "Goodbye", response: "Stay safe, friend!" }
+    ]
+  },
+  survivor: {
+    greeting: ["Thank goodness, another survivor!", "You're not one of them, are you?", "Finally, a friendly face!"],
+    options: [
+      { text: "Are you okay?", response: "Hurt but alive. It's been rough out here." },
+      { text: "Have you seen others?", response: "A few passed through. Headed north, I think." },
+      { text: "Need any help?", response: "If you could take out some of those wolves nearby, I'd feel a lot safer.", triggersQuest: 'clear_wolves' },
+      { text: "Stay safe", response: "You too, friend. Watch your back." }
+    ]
+  }
+};
+
+const QUESTS = {
+  clear_bandits: {
+    name: "Clear the Bandit Camp",
+    description: "Eliminate 5 bandits threatening the area",
+    objectives: [{ type: 'kill', target: 'bandit', count: 5, current: 0 }],
+    rewards: { ammo: 100, health: 50 }
+  },
+  clear_wolves: {
+    name: "Wolf Problem",
+    description: "Take out 3 wolves threatening survivors",
+    objectives: [{ type: 'kill', target: 'wildlife', count: 3, current: 0 }],
+    rewards: { ammo: 50 }
+  }
+};
+
+// Fixed NPC spawn locations
+const NPC_SPAWNS = [
+  { x: 50, z: 50, type: 'merchant' },
+  { x: -50, z: 30, type: 'survivor' },
+  { x: 80, z: -40, type: 'survivor' },
+  { x: -30, z: -60, type: 'merchant' }
+];
+
+// Store NPCs and player quests
+const npcs = {};
+const playerQuests = {}; // { odId: { active: [], completed: [] } }
+
+// Initialize NPCs
+function initializeNPCs() {
+  NPC_SPAWNS.forEach((spawn, index) => {
+    const npcType = NPC_TYPES[spawn.type];
+    const npcId = `npc_${spawn.type}_${index}`;
+    npcs[npcId] = {
+      id: npcId,
+      type: spawn.type,
+      name: npcType.name,
+      x: spawn.x,
+      y: 0,
+      z: spawn.z,
+      color: npcType.color,
+      hostile: npcType.hostile,
+      questGiver: npcType.questGiver || false,
+      interactRange: npcType.interactRange || 5
+    };
+  });
+  console.log(`Initialized ${Object.keys(npcs).length} NPCs`);
+}
 
 // ==================== BUILDING LINE-OF-SIGHT SYSTEM ====================
 // Must match client's building generation for accurate collision
@@ -346,7 +605,7 @@ function spawnEnemiesNearPlayers() {
 
   // Spawn more enemies if below max
   while (aliveEnemies + Object.keys(enemies).length < MAX_ENEMIES && Object.keys(enemies).length < MAX_ENEMIES) {
-    const types = ['soldier', 'soldier', 'scout', 'heavy'];
+    const types = ['soldier', 'soldier', 'scout', 'heavy', 'bandit', 'bandit', 'wildlife'];
     const type = types[Math.floor(Math.random() * types.length)];
     const pos = getRandomSpawnNearPlayers();
     spawnEnemy(type, pos.x, pos.z);
@@ -382,7 +641,7 @@ function initializeEnemies() {
     const x = Math.cos(angle) * distance;
     const z = Math.sin(angle) * distance;
 
-    const types = ['soldier', 'soldier', 'scout', 'heavy'];
+    const types = ['soldier', 'soldier', 'scout', 'heavy', 'bandit', 'bandit', 'wildlife'];
     const type = types[i % types.length];
     spawnEnemy(type, x, z);
   }
@@ -738,19 +997,358 @@ function generateServerSupplyContents() {
   return contents;
 }
 
+// ==================== GAME MODE UPDATE FUNCTIONS ====================
+
+function updateDeathmatch() {
+  if (gameMode.current !== 'deathmatch') return;
+
+  const now = Date.now();
+  const dm = gameMode.state;
+
+  // Check if time is up
+  if (now >= dm.endTime) {
+    // Calculate winner
+    let winner = null;
+    let highestScore = -Infinity;
+
+    for (const id in dm.scores) {
+      const score = dm.scores[id].kills - dm.scores[id].deaths;
+      if (score > highestScore) {
+        highestScore = score;
+        winner = { id, ...dm.scores[id], score };
+      }
+    }
+
+    io.emit('gameModeEnd', { mode: 'deathmatch', winner, scores: dm.scores });
+    initializeGameMode('freeplay');
+    return;
+  }
+
+  // Broadcast timer and scores
+  io.emit('dmUpdate', {
+    timeRemaining: dm.endTime - now,
+    scores: dm.scores
+  });
+}
+
+function updateKOTH() {
+  if (gameMode.current !== 'koth') return;
+
+  const now = Date.now();
+  const koth = gameMode.state;
+  const config = GAME_MODE_CONFIG.koth;
+  const deltaSeconds = (now - koth.lastTick) / 1000;
+  koth.lastTick = now;
+
+  // Count players in zone by team (4 teams)
+  const teamsInZone = { red: 0, blue: 0, green: 0, yellow: 0 };
+
+  for (const id in players) {
+    const player = players[id];
+    if (!player.active || player.team === 'none') continue;
+
+    const dist = getDistance(player, config.zonePosition);
+    if (dist <= config.zoneRadius) {
+      teamsInZone[player.team]++;
+    }
+  }
+
+  // Determine zone control - contested if 2+ teams present
+  const teamsPresent = Object.entries(teamsInZone).filter(([team, count]) => count > 0);
+
+  if (teamsPresent.length > 1) {
+    koth.contested = true;
+    koth.controllingTeam = null;
+  } else if (teamsPresent.length === 1) {
+    koth.contested = false;
+    koth.controllingTeam = teamsPresent[0][0];
+  } else {
+    koth.contested = false;
+    koth.controllingTeam = null;
+  }
+
+  // Award points to controlling team
+  if (koth.controllingTeam && !koth.contested) {
+    koth.scores[koth.controllingTeam] += config.pointsPerSecond * deltaSeconds;
+
+    // Check win condition
+    if (koth.scores[koth.controllingTeam] >= config.pointsToWin) {
+      io.emit('gameModeEnd', { mode: 'koth', winner: koth.controllingTeam, scores: koth.scores });
+      initializeGameMode('freeplay');
+      return;
+    }
+  }
+
+  // Broadcast state update
+  io.emit('kothUpdate', {
+    scores: {
+      red: Math.floor(koth.scores.red),
+      blue: Math.floor(koth.scores.blue),
+      green: Math.floor(koth.scores.green),
+      yellow: Math.floor(koth.scores.yellow)
+    },
+    controlling: koth.controllingTeam,
+    contested: koth.contested
+  });
+}
+
+// Helper to get player's alliance
+function getAlliance(team) {
+  if (team === 'red' || team === 'green') return 'redgreen';
+  if (team === 'blue' || team === 'yellow') return 'blueyellow';
+  return null;
+}
+
+function updateCTF() {
+  if (gameMode.current !== 'ctf') return;
+
+  const ctf = gameMode.state;
+  const config = GAME_MODE_CONFIG.ctf;
+
+  for (const id in players) {
+    const player = players[id];
+    if (!player.active || player.team === 'none') continue;
+
+    const alliance = getAlliance(player.team);
+    if (!alliance) continue;
+
+    // Determine which flag is enemy and which is own based on alliance
+    const enemyFlag = alliance === 'redgreen' ? ctf.blueyellowFlag : ctf.redgreenFlag;
+    const ownFlag = alliance === 'redgreen' ? ctf.redgreenFlag : ctf.blueyellowFlag;
+    const ownBase = alliance === 'redgreen' ? config.redBase : config.blueBase;
+    const enemyBase = alliance === 'redgreen' ? config.blueBase : config.redBase;
+    const enemyAlliance = alliance === 'redgreen' ? 'blueyellow' : 'redgreen';
+
+    // Pick up enemy flag
+    if (!enemyFlag.carrier && enemyFlag.atBase) {
+      const dist = getDistance(player, enemyFlag.position);
+      if (dist < 5) {
+        enemyFlag.carrier = id;
+        enemyFlag.atBase = false;
+        io.emit('flagPickup', {
+          alliance: enemyAlliance,
+          carrierId: id,
+          carrierName: player.name,
+          carrierTeam: player.team
+        });
+      }
+    }
+
+    // Update flag position if carrying
+    if (enemyFlag.carrier === id) {
+      enemyFlag.position = { x: player.x, z: player.z };
+    }
+
+    // Capture flag at own base (must have own flag at base)
+    if (enemyFlag.carrier === id && ownFlag.atBase) {
+      const distToBase = getDistance(player, ownBase);
+      if (distToBase < 5) {
+        ctf.scores[alliance]++;
+        enemyFlag.carrier = null;
+        enemyFlag.atBase = true;
+        enemyFlag.position = { ...enemyBase };
+
+        io.emit('flagCapture', {
+          alliance: alliance,
+          playerName: player.name,
+          playerTeam: player.team,
+          scores: ctf.scores
+        });
+
+        // Check win condition
+        if (ctf.scores[alliance] >= config.scoreToWin) {
+          io.emit('gameModeEnd', { mode: 'ctf', winner: alliance, scores: ctf.scores });
+          initializeGameMode('freeplay');
+          return;
+        }
+      }
+    }
+  }
+
+  // Broadcast flag positions
+  io.emit('ctfUpdate', {
+    redgreenFlag: { ...ctf.redgreenFlag },
+    blueyellowFlag: { ...ctf.blueyellowFlag },
+    scores: ctf.scores
+  });
+}
+
+function updateWaveSurvival() {
+  if (gameMode.current !== 'wave') return;
+
+  const now = Date.now();
+  const ws = gameMode.state;
+  const config = GAME_MODE_CONFIG.wave;
+
+  // Count alive players
+  let playersAlive = 0;
+  for (const id in players) {
+    if (players[id].active && players[id].health > 0) {
+      playersAlive++;
+    }
+  }
+
+  // Check for game over
+  if (ws.inWave && playersAlive === 0) {
+    io.emit('gameModeEnd', { mode: 'wave', waveReached: ws.waveNumber });
+    initializeGameMode('freeplay');
+    return;
+  }
+
+  // Start next wave when break is over
+  if (!ws.inWave && now >= ws.waveBreakEndTime && playersAlive > 0) {
+    ws.waveNumber++;
+    ws.inWave = true;
+    ws.enemiesRemaining = Math.floor(config.baseEnemyCount * Math.pow(config.enemyMultiplier, ws.waveNumber - 1));
+
+    // Spawn wave enemies
+    for (let i = 0; i < ws.enemiesRemaining; i++) {
+      const pos = getRandomSpawnNearPlayers();
+      const enemyId = `wave_${ws.waveNumber}_${i}`;
+      const types = ['soldier', 'scout', 'heavy'];
+      const typeIndex = Math.min(Math.floor(ws.waveNumber / 3), 2);
+      const type = types[Math.floor(Math.random() * (typeIndex + 1))];
+
+      enemies[enemyId] = {
+        ...ENEMY_TYPES[type],
+        type,
+        x: pos.x,
+        z: pos.z,
+        health: ENEMY_TYPES[type].health * (1 + ws.waveNumber * 0.1),
+        state: 'patrol',
+        targetPlayer: null
+      };
+    }
+
+    io.emit('waveStart', { waveNumber: ws.waveNumber, enemyCount: ws.enemiesRemaining });
+  }
+
+  // Check if wave is complete
+  if (ws.inWave) {
+    ws.enemiesRemaining = Object.keys(enemies).filter(id => id.startsWith('wave_')).length;
+    if (ws.enemiesRemaining <= 0) {
+      ws.inWave = false;
+      ws.waveBreakEndTime = now + config.waveBreakTime;
+      io.emit('waveComplete', { waveNumber: ws.waveNumber, nextWaveIn: config.waveBreakTime });
+    }
+  }
+
+  // Broadcast wave state
+  io.emit('waveUpdate', {
+    waveNumber: ws.waveNumber,
+    enemiesRemaining: ws.enemiesRemaining,
+    inWave: ws.inWave,
+    breakTimeRemaining: ws.inWave ? 0 : Math.max(0, ws.waveBreakEndTime - now)
+  });
+}
+
+function updateBattleRoyale() {
+  if (gameMode.current !== 'battleroyale') return;
+
+  const now = Date.now();
+  const br = gameMode.state;
+  const config = GAME_MODE_CONFIG.battleroyale;
+
+  // Count alive players
+  let playersAlive = 0;
+  const alivePlayers = [];
+  for (const id in players) {
+    if (players[id].active && players[id].health > 0) {
+      playersAlive++;
+      alivePlayers.push({ id, name: players[id].name });
+    }
+  }
+  br.playersAlive = playersAlive;
+
+  // Check win condition
+  if (playersAlive === 1) {
+    io.emit('gameModeEnd', {
+      mode: 'battleroyale',
+      winner: alivePlayers[0]
+    });
+    initializeGameMode('freeplay');
+    return;
+  }
+
+  if (playersAlive === 0) {
+    io.emit('gameModeEnd', { mode: 'battleroyale', winner: null });
+    initializeGameMode('freeplay');
+    return;
+  }
+
+  // Shrink circle periodically
+  if (now - br.lastShrink >= config.shrinkInterval && br.targetRadius > config.minRadius) {
+    br.lastShrink = now;
+    br.targetRadius = Math.max(config.minRadius, br.targetRadius - config.shrinkAmount);
+    br.phase++;
+    io.emit('brShrink', { phase: br.phase, targetRadius: br.targetRadius });
+  }
+
+  // Gradually shrink to target
+  if (br.currentRadius > br.targetRadius) {
+    br.currentRadius = Math.max(br.targetRadius, br.currentRadius - 0.5);
+  }
+
+  // Damage players outside circle
+  for (const id in players) {
+    const player = players[id];
+    if (!player.active || player.health <= 0) continue;
+
+    const dist = getDistance(player, br.center);
+    if (dist > br.currentRadius) {
+      const damage = config.damagePerSecond / TICK_RATE;
+      player.health -= damage;
+
+      if (player.health <= 0) {
+        player.health = 0;
+        io.emit('playerDeath', {
+          playerId: id,
+          playerName: player.name,
+          playerTeam: player.team,
+          killerName: 'The Storm',
+          killerId: null,
+          killerTeam: null,
+          isEnemyKill: true
+        });
+      }
+    }
+  }
+
+  // Broadcast BR state
+  io.emit('brUpdate', {
+    center: br.center,
+    currentRadius: br.currentRadius,
+    targetRadius: br.targetRadius,
+    phase: br.phase,
+    playersAlive: playersAlive
+  });
+}
+
 setInterval(() => {
   const now = Date.now();
   const delta = (now - lastUpdate) / 1000;
   lastUpdate = now;
 
-  updateEnemyAI(delta);
+  // Update game mode logic
+  updateDeathmatch();
+  updateKOTH();
+  updateCTF();
+  updateWaveSurvival();
+  updateBattleRoyale();
 
-  // Periodically spawn/despawn enemies based on player positions
-  if (now - lastSpawnCheck > SPAWN_CHECK_INTERVAL) {
-    lastSpawnCheck = now;
-    despawnFarEnemies();
-    spawnEnemiesNearPlayers();
-    checkBossRespawns(); // Check if any bosses should respawn
+  // Only run AI for modes that use enemies
+  if (gameMode.current !== 'battleroyale') {
+    updateEnemyAI(delta);
+  }
+
+  // Periodically spawn/despawn enemies (not in wave or BR modes)
+  if (gameMode.current !== 'wave' && gameMode.current !== 'battleroyale') {
+    if (now - lastSpawnCheck > SPAWN_CHECK_INTERVAL) {
+      lastSpawnCheck = now;
+      despawnFarEnemies();
+      spawnEnemiesNearPlayers();
+      checkBossRespawns();
+    }
   }
 
   // Periodically spawn supply drops
@@ -801,17 +1399,57 @@ io.on('connection', (socket) => {
   // Send current state to new player
   io.emit('players', players);
   socket.emit('enemies', enemies);
+  socket.emit('npcs', npcs);
 
-  // Handle player info (name, team, difficulty)
+  // Initialize player quests
+  playerQuests[socket.id] = { active: [], completed: [] };
+
+  // Handle player info (name, team, difficulty, gameMode)
   socket.on('setPlayerInfo', (data) => {
     if (players[socket.id]) {
       players[socket.id].name = (data.name || 'Player').substring(0, 16);
-      players[socket.id].team = ['none', 'red', 'blue'].includes(data.team) ? data.team : 'none';
+      players[socket.id].team = ['none', 'red', 'blue', 'green', 'yellow'].includes(data.team) ? data.team : 'none';
       players[socket.id].difficulty = ['easy', 'normal', 'hard'].includes(data.difficulty) ? data.difficulty : 'normal';
-      players[socket.id].active = true;  // Player is now in game
-      console.log(`Player ${socket.id} joined as "${players[socket.id].name}" on team ${players[socket.id].team}`);
+      players[socket.id].active = true;
+
+      // Initialize game mode if specified
+      if (data.gameMode && GAME_MODE_CONFIG[data.gameMode]) {
+        if (gameMode.current === 'freeplay' || gameMode.current !== data.gameMode) {
+          initializeGameMode(data.gameMode);
+        }
+      }
+
+      console.log(`Player ${socket.id} joined as "${players[socket.id].name}" on team ${players[socket.id].team} (mode: ${gameMode.current})`);
       io.emit('players', players);
+
+      // Send current game mode state to the new player
+      socket.emit('gameModeState', {
+        mode: gameMode.current,
+        state: gameMode.state,
+        config: GAME_MODE_CONFIG[gameMode.current]
+      });
     }
+  });
+
+  // Handle game mode change request
+  socket.on('setGameMode', (data) => {
+    if (data.mode && GAME_MODE_CONFIG[data.mode]) {
+      initializeGameMode(data.mode);
+      io.emit('gameModeChanged', {
+        mode: gameMode.current,
+        state: gameMode.state,
+        config: GAME_MODE_CONFIG[gameMode.current]
+      });
+    }
+  });
+
+  // Handle request for current game state
+  socket.on('requestGameState', () => {
+    socket.emit('gameModeState', {
+      mode: gameMode.current,
+      state: gameMode.state,
+      config: GAME_MODE_CONFIG[gameMode.current]
+    });
   });
 
   // Handle player movement
@@ -949,6 +1587,29 @@ io.on('connection', (socket) => {
           killerTeam: killer ? killer.team : 'none',
           isEnemyKill: false
         });
+
+        // Update deathmatch scores
+        if (gameMode.current === 'deathmatch') {
+          if (gameMode.state.scores[socket.id]) {
+            gameMode.state.scores[socket.id].kills++;
+          }
+          if (gameMode.state.scores[data.targetId]) {
+            gameMode.state.scores[data.targetId].deaths++;
+          }
+        }
+
+        // CTF: Drop flag on death (alliance system)
+        if (gameMode.current === 'ctf') {
+          const ctf = gameMode.state;
+          if (ctf.redgreenFlag.carrier === data.targetId) {
+            ctf.redgreenFlag.carrier = null;
+            io.emit('flagDrop', { team: 'redgreen', position: ctf.redgreenFlag.position });
+          }
+          if (ctf.blueyellowFlag.carrier === data.targetId) {
+            ctf.blueyellowFlag.carrier = null;
+            io.emit('flagDrop', { team: 'blueyellow', position: ctf.blueyellowFlag.position });
+          }
+        }
       }
     }
   });
@@ -1020,6 +1681,37 @@ io.on('connection', (socket) => {
             killerId: socket.id
           });
 
+          // Update quest progress for bandit/wildlife kills
+          const pq = playerQuests[socket.id];
+          if (pq && pq.active.length > 0) {
+            const enemyType = enemy.type;
+            pq.active.forEach(quest => {
+              quest.objectives.forEach(obj => {
+                if (obj.type === 'kill' && obj.target === enemyType && obj.current < obj.count) {
+                  obj.current++;
+                  socket.emit('questProgress', {
+                    questId: quest.id,
+                    objectives: quest.objectives
+                  });
+
+                  // Check if quest is complete
+                  const allComplete = quest.objectives.every(o => o.current >= o.count);
+                  if (allComplete) {
+                    // Remove from active and add to completed
+                    pq.active = pq.active.filter(q => q.id !== quest.id);
+                    pq.completed.push(quest.id);
+
+                    socket.emit('questComplete', {
+                      questId: quest.id,
+                      questName: quest.name,
+                      rewards: quest.rewards
+                    });
+                  }
+                }
+              });
+            });
+          }
+
           // Respawn after delay
           setTimeout(() => {
             respawnEnemy(data.enemyId);
@@ -1083,10 +1775,99 @@ io.on('connection', (socket) => {
     });
   });
 
+  // ==================== NPC INTERACTION HANDLERS ====================
+
+  // Player initiates dialogue with NPC
+  socket.on('interactNPC', (data) => {
+    const npc = npcs[data.npcId];
+    if (!npc || npc.hostile) return;
+
+    const player = players[socket.id];
+    if (!player) return;
+
+    // Check if player is in range
+    const distance = getDistance(player.x, player.z, npc.x, npc.z);
+    if (distance > npc.interactRange) return;
+
+    // Get dialogue for this NPC type
+    const dialogue = NPC_DIALOGUES[npc.type];
+    if (!dialogue) return;
+
+    // Pick a random greeting
+    const greeting = dialogue.greeting[Math.floor(Math.random() * dialogue.greeting.length)];
+
+    // Filter out quest options if player already has/completed that quest
+    const pq = playerQuests[socket.id] || { active: [], completed: [] };
+    const filteredOptions = dialogue.options.filter(opt => {
+      if (opt.triggersQuest) {
+        const hasQuest = pq.active.some(q => q.id === opt.triggersQuest);
+        const completedQuest = pq.completed.includes(opt.triggersQuest);
+        return !hasQuest && !completedQuest;
+      }
+      return true;
+    });
+
+    socket.emit('npcDialogue', {
+      npcId: npc.id,
+      npcName: npc.name,
+      greeting: greeting,
+      options: filteredOptions.map((opt, index) => ({ index, text: opt.text }))
+    });
+  });
+
+  // Player selects a dialogue option
+  socket.on('dialogueChoice', (data) => {
+    const npc = npcs[data.npcId];
+    if (!npc || npc.hostile) return;
+
+    const dialogue = NPC_DIALOGUES[npc.type];
+    if (!dialogue) return;
+
+    const option = dialogue.options[data.optionIndex];
+    if (!option) return;
+
+    // Send response
+    socket.emit('npcResponse', {
+      npcId: npc.id,
+      npcName: npc.name,
+      response: option.response
+    });
+
+    // Trigger quest if applicable
+    if (option.triggersQuest) {
+      const questDef = QUESTS[option.triggersQuest];
+      if (!questDef) return;
+
+      const pq = playerQuests[socket.id];
+      if (!pq) return;
+
+      // Check if player doesn't already have this quest
+      const hasQuest = pq.active.some(q => q.id === option.triggersQuest);
+      const completedQuest = pq.completed.includes(option.triggersQuest);
+
+      if (!hasQuest && !completedQuest) {
+        // Create a copy of the quest for this player
+        const playerQuest = {
+          id: option.triggersQuest,
+          name: questDef.name,
+          description: questDef.description,
+          objectives: questDef.objectives.map(obj => ({ ...obj, current: 0 })),
+          rewards: { ...questDef.rewards }
+        };
+        pq.active.push(playerQuest);
+
+        socket.emit('questStarted', {
+          quest: playerQuest
+        });
+      }
+    }
+  });
+
   // Handle player disconnect
   socket.on('disconnect', () => {
     console.log(`Player disconnected: ${socket.id}`);
     delete players[socket.id];
+    delete playerQuests[socket.id];
     io.emit('players', players);
   });
 });
@@ -1103,6 +1884,9 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 
+// Initialize NPCs before server starts
+initializeNPCs();
+
 httpServer.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════╗
@@ -1111,6 +1895,7 @@ httpServer.listen(PORT, () => {
 ║  Server running on port ${PORT}          ║
 ║  http://localhost:${PORT}                ║
 ║  Enemies: ${Object.keys(enemies).length} spawned              ║
+║  NPCs: ${Object.keys(npcs).length} spawned                 ║
 ╚═══════════════════════════════════════╝
   `);
 });
