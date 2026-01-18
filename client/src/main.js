@@ -506,6 +506,13 @@ const WEAPON_ATTACHMENT_SLOTS = {
   sniper: ['scope', 'silencer', 'extendedMag']
 };
 
+// Kill streak rewards
+const KILLSTREAK_REWARDS = {
+  uav: { kills: 3, name: 'UAV', duration: 10000, color: '#00ffff' },
+  airstrike: { kills: 5, name: 'Airstrike', color: '#ff4400' },
+  supplyDrop: { kills: 7, name: 'Supply Drop', color: '#ffd700' }
+};
+
 // Get weapon stats with attachment modifiers applied
 function getEffectiveWeaponStats(weaponType) {
   const baseWeapon = WEAPONS[weaponType];
@@ -651,6 +658,15 @@ function closeInventory() {
   }
 }
 
+// Short names for attachments in UI
+const ATTACHMENT_SHORT_NAMES = {
+  scope: 'Scope',
+  silencer: 'Silencer',
+  extendedMag: 'Ext Mag',
+  grip: 'Grip',
+  laserSight: 'Laser'
+};
+
 // Render the inventory UI
 function renderInventoryUI() {
   const container = document.getElementById('weapon-slots');
@@ -672,7 +688,7 @@ function renderInventoryUI() {
 
     const header = document.createElement('div');
     header.className = 'weapon-slot-header';
-    header.innerHTML = `<strong>${weapon.name}</strong> <span class="kill-count">(${kills} kills)</span>`;
+    header.innerHTML = `<strong>${weapon.name}</strong> <span class="kill-count">${kills} kills</span>`;
     slotDiv.appendChild(header);
 
     const attachmentsDiv = document.createElement('div');
@@ -680,6 +696,7 @@ function renderInventoryUI() {
 
     for (const attachmentType of availableSlots) {
       const attachment = ATTACHMENTS[attachmentType];
+      const shortName = ATTACHMENT_SHORT_NAMES[attachmentType] || attachment.name;
       const isUnlocked = unlocked.includes(attachmentType);
       const isEquipped = equipped.includes(attachmentType);
 
@@ -689,10 +706,10 @@ function renderInventoryUI() {
       if (isEquipped) itemDiv.classList.add('equipped');
 
       if (isUnlocked) {
-        itemDiv.textContent = attachment.name;
+        itemDiv.textContent = shortName;
         itemDiv.onclick = () => toggleAttachment(weaponType, attachmentType);
       } else {
-        itemDiv.textContent = `${attachment.name} (${attachment.killsRequired} kills)`;
+        itemDiv.textContent = `${shortName} (${attachment.killsRequired})`;
       }
 
       attachmentsDiv.appendChild(itemDiv);
@@ -739,6 +756,7 @@ const state = {
   players: {},
   enemies: {},
   currentWeapon: 'pistol',
+  previousWeapon: 'pistol',
   ammoInMag: WEAPONS.pistol.magSize,
   ammoReserve: WEAPONS.pistol.maxAmmo,
   isReloading: false,
@@ -755,6 +773,11 @@ const state = {
   // Stats
   kills: 0,
   deaths: 0,
+  // Kill streaks
+  killStreak: 0,
+  uavActive: false,
+  uavEndTime: 0,
+  pendingAirstrike: false,
   // Vehicle state
   inVehicle: false,
   currentVehicle: null,
@@ -2017,6 +2040,250 @@ const WEAPON_PICKUPS = {
 const weaponPickups = {};
 let weaponPickupIdCounter = 0;
 
+// Supply drops
+const supplyDrops = {};
+let supplyDropIdCounter = 0;
+const SUPPLY_DROP_COLLECT_DISTANCE = 4;
+
+function createSupplyDropMesh() {
+  const group = new THREE.Group();
+
+  // Large military crate
+  const crateGeo = new THREE.BoxGeometry(2, 1.5, 2);
+  const crateMat = new THREE.MeshStandardMaterial({
+    color: 0x4a6741, // Military green
+    metalness: 0.3
+  });
+  const crate = new THREE.Mesh(crateGeo, crateMat);
+  crate.position.y = 0.75;
+  crate.castShadow = true;
+  group.add(crate);
+
+  // Yellow warning stripes
+  const stripeMat = new THREE.MeshStandardMaterial({ color: 0xffd700 });
+  const stripe1 = new THREE.Mesh(new THREE.BoxGeometry(2.05, 0.1, 0.3), stripeMat);
+  stripe1.position.set(0, 1.2, 0.5);
+  group.add(stripe1);
+  const stripe2 = new THREE.Mesh(new THREE.BoxGeometry(2.05, 0.1, 0.3), stripeMat);
+  stripe2.position.set(0, 1.2, -0.5);
+  group.add(stripe2);
+
+  // Glowing beacon
+  const beaconGeo = new THREE.CylinderGeometry(0.15, 0.15, 3, 8);
+  const beaconMat = new THREE.MeshBasicMaterial({
+    color: 0xffd700,
+    transparent: true,
+    opacity: 0.6
+  });
+  const beacon = new THREE.Mesh(beaconGeo, beaconMat);
+  beacon.position.y = 2.5;
+  beacon.name = 'beacon';
+  group.add(beacon);
+
+  // Glow sphere
+  const glowGeo = new THREE.SphereGeometry(1.5, 16, 16);
+  const glowMat = new THREE.MeshBasicMaterial({
+    color: 0xffd700,
+    transparent: true,
+    opacity: 0.15
+  });
+  const glow = new THREE.Mesh(glowGeo, glowMat);
+  glow.position.y = 0.75;
+  glow.name = 'glow';
+  group.add(glow);
+
+  group.userData.type = 'supplyDrop';
+  group.userData.isSupplyDrop = true;
+
+  return group;
+}
+
+function generateSupplyDropContents() {
+  const contents = [];
+
+  // Always give ammo
+  contents.push({ type: 'ammo', amount: 50 });
+
+  // Random weapon (30% chance)
+  if (Math.random() < 0.3) {
+    const weapons = ['rifle', 'shotgun', 'sniper'];
+    contents.push({ type: 'weapon', weapon: weapons[Math.floor(Math.random() * weapons.length)] });
+  }
+
+  // Health (50% chance)
+  if (Math.random() < 0.5) {
+    contents.push({ type: 'health', amount: 50 });
+  }
+
+  return contents;
+}
+
+function spawnSupplyDrop(x, z, contents) {
+  const id = `supply_${supplyDropIdCounter++}`;
+  const mesh = createSupplyDropMesh();
+  mesh.position.set(x, 0, z);
+  mesh.userData.supplyDropId = id;
+
+  scene.add(mesh);
+
+  supplyDrops[id] = {
+    id,
+    mesh,
+    x,
+    z,
+    contents: contents || generateSupplyDropContents(),
+    collected: false
+  };
+
+  showPickupMessage('Supply Drop Incoming!', '#ffd700');
+  return id;
+}
+
+function collectSupplyDrop(drop) {
+  if (drop.collected) return;
+
+  drop.collected = true;
+  scene.remove(drop.mesh);
+
+  for (const item of drop.contents) {
+    if (item.type === 'weapon') {
+      if (state.weapons[item.weapon]) {
+        // Already have weapon - give ammo
+        const ammoAmount = Math.floor(WEAPONS[item.weapon].maxAmmo / 2);
+        state.ammoReserve += ammoAmount;
+        showPickupMessage(`+${ammoAmount} Ammo`, '#f39c12');
+      } else {
+        state.weapons[item.weapon] = true;
+        showPickupMessage(`Acquired ${WEAPONS[item.weapon].name}!`, '#9b59b6');
+        updateWeaponSlots();
+      }
+    } else if (item.type === 'ammo') {
+      state.ammoReserve += item.amount;
+      updateAmmoDisplay();
+      showPickupMessage(`+${item.amount} Ammo`, '#f39c12');
+    } else if (item.type === 'health') {
+      state.health = Math.min(100, state.health + item.amount);
+      updateHealth();
+      showPickupMessage(`+${item.amount} HP`, '#27ae60');
+    }
+  }
+
+  playSound('pickup');
+  delete supplyDrops[drop.id];
+}
+
+function updateSupplyDrops() {
+  const now = Date.now();
+  const playerPos = camera.position;
+
+  for (const id in supplyDrops) {
+    const drop = supplyDrops[id];
+    if (drop.collected) continue;
+
+    // Animate (bob and pulse beacon)
+    drop.mesh.position.y = Math.sin(now * 0.002) * 0.1;
+    drop.mesh.rotation.y += 0.005;
+
+    const beacon = drop.mesh.getObjectByName('beacon');
+    if (beacon) {
+      beacon.material.opacity = 0.4 + Math.sin(now * 0.008) * 0.3;
+    }
+
+    const glow = drop.mesh.getObjectByName('glow');
+    if (glow) {
+      glow.material.opacity = 0.1 + Math.sin(now * 0.005) * 0.08;
+    }
+
+    // Check collection distance
+    const dx = drop.x - playerPos.x;
+    const dz = drop.z - playerPos.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+
+    if (dist < SUPPLY_DROP_COLLECT_DISTANCE && state.isPlaying && !state.isDead) {
+      collectSupplyDrop(drop);
+    }
+  }
+}
+
+// ==================== KILL STREAK SYSTEM ====================
+
+function showStreakNotification(streakName, color, isReady = true) {
+  const notification = document.createElement('div');
+  notification.className = 'streak-notification';
+  notification.innerHTML = isReady
+    ? `<span class="streak-icon">★</span> ${streakName} Ready!`
+    : `<span class="streak-icon">★</span> ${streakName}`;
+  notification.style.color = color;
+  document.getElementById('hud').appendChild(notification);
+
+  setTimeout(() => {
+    notification.style.opacity = '0';
+    setTimeout(() => notification.remove(), 500);
+  }, 3000);
+}
+
+function checkKillStreakRewards() {
+  const streak = state.killStreak;
+
+  if (streak === KILLSTREAK_REWARDS.uav.kills) {
+    activateUAV();
+    showStreakNotification('UAV', KILLSTREAK_REWARDS.uav.color);
+  } else if (streak === KILLSTREAK_REWARDS.airstrike.kills) {
+    state.pendingAirstrike = true;
+    showStreakNotification('Airstrike - Click to Call In', KILLSTREAK_REWARDS.airstrike.color);
+  } else if (streak === KILLSTREAK_REWARDS.supplyDrop.kills) {
+    callKillStreakSupplyDrop();
+    showStreakNotification('Supply Drop Incoming!', KILLSTREAK_REWARDS.supplyDrop.color);
+  }
+}
+
+function activateUAV() {
+  state.uavActive = true;
+  state.uavEndTime = Date.now() + KILLSTREAK_REWARDS.uav.duration;
+  console.log('UAV activated - enemies visible on minimap');
+}
+
+function callKillStreakSupplyDrop() {
+  // Spawn supply drop near player
+  const angle = Math.random() * Math.PI * 2;
+  const distance = 15 + Math.random() * 10;
+  const x = camera.position.x + Math.cos(angle) * distance;
+  const z = camera.position.z + Math.sin(angle) * distance;
+
+  // Emit to server for multiplayer sync
+  socket.emit('supplyDrop', { x, z });
+  spawnSupplyDrop(x, z);
+}
+
+function callAirstrike(targetX, targetZ) {
+  if (!state.pendingAirstrike) return;
+
+  state.pendingAirstrike = false;
+  console.log(`Calling airstrike at (${targetX.toFixed(0)}, ${targetZ.toFixed(0)})`);
+
+  // Emit to server to damage enemies
+  socket.emit('airstrike', { x: targetX, z: targetZ });
+
+  // Create visual effect
+  createAirstrikeEffect(targetX, targetZ);
+  showStreakNotification('Airstrike Deployed!', KILLSTREAK_REWARDS.airstrike.color, false);
+}
+
+function createAirstrikeEffect(x, z) {
+  // Create multiple explosions
+  const AIRSTRIKE_RADIUS = 15;
+  for (let i = 0; i < 10; i++) {
+    setTimeout(() => {
+      const offsetX = (Math.random() - 0.5) * AIRSTRIKE_RADIUS * 2;
+      const offsetZ = (Math.random() - 0.5) * AIRSTRIKE_RADIUS * 2;
+      for (let j = 0; j < 5; j++) {
+        createHitEffect(new THREE.Vector3(x + offsetX, 1 + Math.random() * 3, z + offsetZ), 0xff4400);
+      }
+      playSound('explosion');
+    }, i * 100);
+  }
+}
+
 function createHealthPackMesh() {
   const group = new THREE.Group();
 
@@ -2656,6 +2923,66 @@ const RENDER_DISTANCE = 2; // chunks in each direction (reduced from 3 for perfo
 const chunks = {};
 const collidableObjects = [];
 
+// Player collision radius
+const PLAYER_RADIUS = 0.5;
+
+// Check if a position collides with buildings
+function checkBuildingCollision(newX, newZ) {
+  for (const obj of collidableObjects) {
+    if (!obj.userData || !obj.userData.isBuilding) continue;
+
+    const bx = obj.userData.worldX;
+    const bz = obj.userData.worldZ;
+    const halfW = obj.userData.width / 2;
+    const halfD = obj.userData.depth / 2;
+    const wallThickness = 0.5; // Collision thickness of walls
+
+    // Check if player is in the wall zones (not interior)
+    const inBuildingX = newX > bx - halfW - PLAYER_RADIUS && newX < bx + halfW + PLAYER_RADIUS;
+    const inBuildingZ = newZ > bz - halfD - PLAYER_RADIUS && newZ < bz + halfD + PLAYER_RADIUS;
+
+    if (!inBuildingX || !inBuildingZ) continue; // Not near this building
+
+    // Check if in the interior (not in walls) - allow free movement inside
+    const inInteriorX = newX > bx - halfW + wallThickness && newX < bx + halfW - wallThickness;
+    const inInteriorZ = newZ > bz - halfD + wallThickness && newZ < bz + halfD - wallThickness;
+
+    if (inInteriorX && inInteriorZ) {
+      continue; // Inside the building interior - no collision
+    }
+
+    // Player is in the wall zone - check for doorway
+    const doorWidth = 2;
+    const doorX = bx; // Door is centered
+    const doorZ = bz + halfD; // Door is at front
+
+    // Check if at the doorway opening
+    const atDoorX = Math.abs(newX - doorX) < doorWidth / 2 + PLAYER_RADIUS;
+    const atDoorZ = Math.abs(newZ - doorZ) < 1.5;
+
+    if (atDoorX && atDoorZ) {
+      // At doorway - check if any door here is open
+      let doorOpen = false;
+      for (const id in doors) {
+        const door = doors[id];
+        const dx = doorX - door.x;
+        const dz = doorZ - door.z;
+        if (Math.abs(dx) < 2 && Math.abs(dz) < 2 && door.isOpen) {
+          doorOpen = true;
+          break;
+        }
+      }
+      if (doorOpen) {
+        continue; // Door is open, allow passage
+      }
+    }
+
+    // Collision with wall or closed door
+    return true;
+  }
+  return false; // No collision
+}
+
 // Shared geometries for performance (created once, reused across all chunks)
 const sharedGroundGeometry = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE);
 const sharedStreetHGeometry = new THREE.PlaneGeometry(CHUNK_SIZE, 8); // streetWidth = 8
@@ -2699,7 +3026,24 @@ const groundMaterial = new THREE.MeshLambertMaterial({
 });
 
 // Building colors
-const BUILDING_COLORS = [0x808080, 0x606060, 0x707070, 0x505050, 0x909090, 0x555555, 0x656565, 0x757575];
+const BUILDING_COLORS = [
+  // Grays
+  0x808080, 0x606060, 0x707070, 0x909090,
+  // Brick reds
+  0x8B4513, 0xA0522D, 0x6B3A2A, 0x8B0000,
+  // Tans/Beiges
+  0xD2B48C, 0xC4A46B, 0xBDB76B, 0xDEB887,
+  // Creams/Whites
+  0xFAF0E6, 0xF5F5DC, 0xFFEFD5, 0xE8E4C9,
+  // Blues
+  0x4682B4, 0x5F9EA0, 0x6B8E9F, 0x708090,
+  // Greens
+  0x556B2F, 0x6B8E23, 0x8FBC8F, 0x5D7D5D,
+  // Yellows
+  0xDAA520, 0xF0E68C, 0xBDB76B, 0xEED9A4,
+  // Browns
+  0x8B7355, 0x7B6652, 0x6B5344, 0x5C4033
+];
 
 // Streetlight system
 const streetlights = [];
@@ -2812,8 +3156,7 @@ function createDoor(x, z, rotation, buildingGroup) {
   handle.position.set(1.6, 1.3, 0.1);
   pivot.add(handle);
 
-  // Position pivot at door hinge location
-  pivot.position.set(-1, 0, 0); // Left edge of door opening
+  // Pivot rotation (position is set by caller)
   pivot.rotation.y = rotation;
 
   doors[id] = {
@@ -3033,26 +3376,103 @@ function createBuildingWithInterior(x, z, width, height, depth, color, seed, chu
   aboveDoor.castShadow = true;
   group.add(aboveDoor);
 
-  // Door (at front of building)
+  // Door (at front of building, centered in doorway)
   const doorWorldX = x;
   const doorWorldZ = z + depth / 2;
   const door = createDoor(doorWorldX, doorWorldZ, 0, group);
-  door.position.set(0, 0, depth / 2 - wallThickness / 2);
+  // Position door pivot at left edge of doorway (-1), at the front wall
+  door.position.set(-doorWidth / 2, 0, depth / 2 - wallThickness / 2);
   group.add(door);
 
-  // Left wall
-  const leftWallGeo = new THREE.BoxGeometry(wallThickness, height, depth);
-  const leftWall = new THREE.Mesh(leftWallGeo, wallMat);
-  leftWall.position.set(-width / 2 + wallThickness / 2, height / 2, 0);
-  leftWall.castShadow = true;
-  group.add(leftWall);
+  // Window dimensions
+  const windowWidth = 1.5;
+  const windowHeight = 1.2;
+  const windowBottom = 1.2; // Height from floor
+  const windowTop = windowBottom + windowHeight;
 
-  // Right wall
-  const rightWallGeo = new THREE.BoxGeometry(wallThickness, height, depth);
-  const rightWall = new THREE.Mesh(rightWallGeo, wallMat);
-  rightWall.position.set(width / 2 - wallThickness / 2, height / 2, 0);
-  rightWall.castShadow = true;
-  group.add(rightWall);
+  // Glass material (semi-transparent blue tint)
+  const glassMat = new THREE.MeshStandardMaterial({
+    color: 0x88ccff,
+    transparent: true,
+    opacity: 0.3,
+    side: THREE.DoubleSide
+  });
+
+  // Left wall with window
+  const leftWallX = -width / 2 + wallThickness / 2;
+
+  // Left wall - below window
+  const leftBelowGeo = new THREE.BoxGeometry(wallThickness, windowBottom, depth);
+  const leftBelow = new THREE.Mesh(leftBelowGeo, wallMat);
+  leftBelow.position.set(leftWallX, windowBottom / 2, 0);
+  leftBelow.castShadow = true;
+  group.add(leftBelow);
+
+  // Left wall - above window
+  const aboveWindowHeight = height - windowTop;
+  const leftAboveGeo = new THREE.BoxGeometry(wallThickness, aboveWindowHeight, depth);
+  const leftAbove = new THREE.Mesh(leftAboveGeo, wallMat);
+  leftAbove.position.set(leftWallX, windowTop + aboveWindowHeight / 2, 0);
+  leftAbove.castShadow = true;
+  group.add(leftAbove);
+
+  // Left wall - front of window
+  const sideOfWindow = (depth - windowWidth) / 2;
+  const leftFrontGeo = new THREE.BoxGeometry(wallThickness, windowHeight, sideOfWindow);
+  const leftFront = new THREE.Mesh(leftFrontGeo, wallMat);
+  leftFront.position.set(leftWallX, windowBottom + windowHeight / 2, depth / 2 - sideOfWindow / 2);
+  leftFront.castShadow = true;
+  group.add(leftFront);
+
+  // Left wall - back of window
+  const leftBackGeo = new THREE.BoxGeometry(wallThickness, windowHeight, sideOfWindow);
+  const leftBack = new THREE.Mesh(leftBackGeo, wallMat);
+  leftBack.position.set(leftWallX, windowBottom + windowHeight / 2, -depth / 2 + sideOfWindow / 2);
+  leftBack.castShadow = true;
+  group.add(leftBack);
+
+  // Left window glass
+  const leftGlassGeo = new THREE.BoxGeometry(wallThickness * 0.5, windowHeight, windowWidth);
+  const leftGlass = new THREE.Mesh(leftGlassGeo, glassMat);
+  leftGlass.position.set(leftWallX, windowBottom + windowHeight / 2, 0);
+  group.add(leftGlass);
+
+  // Right wall with window
+  const rightWallX = width / 2 - wallThickness / 2;
+
+  // Right wall - below window
+  const rightBelowGeo = new THREE.BoxGeometry(wallThickness, windowBottom, depth);
+  const rightBelow = new THREE.Mesh(rightBelowGeo, wallMat);
+  rightBelow.position.set(rightWallX, windowBottom / 2, 0);
+  rightBelow.castShadow = true;
+  group.add(rightBelow);
+
+  // Right wall - above window
+  const rightAboveGeo = new THREE.BoxGeometry(wallThickness, aboveWindowHeight, depth);
+  const rightAbove = new THREE.Mesh(rightAboveGeo, wallMat);
+  rightAbove.position.set(rightWallX, windowTop + aboveWindowHeight / 2, 0);
+  rightAbove.castShadow = true;
+  group.add(rightAbove);
+
+  // Right wall - front of window
+  const rightFrontGeo = new THREE.BoxGeometry(wallThickness, windowHeight, sideOfWindow);
+  const rightFront = new THREE.Mesh(rightFrontGeo, wallMat);
+  rightFront.position.set(rightWallX, windowBottom + windowHeight / 2, depth / 2 - sideOfWindow / 2);
+  rightFront.castShadow = true;
+  group.add(rightFront);
+
+  // Right wall - back of window
+  const rightBackGeo = new THREE.BoxGeometry(wallThickness, windowHeight, sideOfWindow);
+  const rightBack = new THREE.Mesh(rightBackGeo, wallMat);
+  rightBack.position.set(rightWallX, windowBottom + windowHeight / 2, -depth / 2 + sideOfWindow / 2);
+  rightBack.castShadow = true;
+  group.add(rightBack);
+
+  // Right window glass
+  const rightGlassGeo = new THREE.BoxGeometry(wallThickness * 0.5, windowHeight, windowWidth);
+  const rightGlass = new THREE.Mesh(rightGlassGeo, glassMat);
+  rightGlass.position.set(rightWallX, windowBottom + windowHeight / 2, 0);
+  group.add(rightGlass);
 
   // Roof
   const roofGeo = new THREE.BoxGeometry(width, wallThickness, depth);
@@ -3106,6 +3526,14 @@ function createBuildingWithInterior(x, z, width, height, depth, color, seed, chu
     shelf.position.set(0, 1.5, -interiorDepth / 2 + 0.3);
     group.add(shelf);
   }
+
+  // Store building bounds for collision detection
+  group.userData.isBuilding = true;
+  group.userData.width = width;
+  group.userData.depth = depth;
+  group.userData.height = height;
+  group.userData.worldX = x;
+  group.userData.worldZ = z;
 
   return group;
 }
@@ -3228,73 +3656,11 @@ function createChunk(cx, cz) {
     chunk.add(bulbInstances);
   }
 
-  // Add parked cars along streets
-  const parkingOffset = streetWidth / 2 - 1.5; // Park on the edge of street
-  const carSpacing = 16; // Space between potential car spots (increased for performance)
-  const carTypes = ['sedan', 'sedan', 'sedan', 'truck', 'sports']; // Weighted distribution
-
-  // Parked cars along horizontal street
-  for (let px = carSpacing; px < CHUNK_SIZE - carSpacing; px += carSpacing) {
-    // Skip intersection area
-    if (Math.abs(px - CHUNK_SIZE / 2) < streetWidth / 2 + 3) continue;
-
-    const carSeed = seed + 5000 + Math.floor(px);
-
-    // 20% chance for a car on each side (reduced from 40% for performance)
-    if (seededRandom(carSeed) < 0.2) {
-      const carType = carTypes[Math.floor(seededRandom(carSeed + 1) * carTypes.length)];
-      const carX = worldX + px;
-      const carZ = worldZ + CHUNK_SIZE / 2 - parkingOffset;
-      const car = spawnParkedCar(carX, carZ, Math.PI / 2, carType, carSeed + 2);
-      chunk.add(car);
-      chunk.userData.objects.push(car);
-      collidableObjects.push(car);
-    }
-
-    if (seededRandom(carSeed + 10) < 0.2) {
-      const carType = carTypes[Math.floor(seededRandom(carSeed + 11) * carTypes.length)];
-      const carX = worldX + px;
-      const carZ = worldZ + CHUNK_SIZE / 2 + parkingOffset;
-      const car = spawnParkedCar(carX, carZ, -Math.PI / 2, carType, carSeed + 12);
-      chunk.add(car);
-      chunk.userData.objects.push(car);
-      collidableObjects.push(car);
-    }
-  }
-
-  // Parked cars along vertical street
-  for (let pz = carSpacing; pz < CHUNK_SIZE - carSpacing; pz += carSpacing) {
-    // Skip intersection area
-    if (Math.abs(pz - CHUNK_SIZE / 2) < streetWidth / 2 + 3) continue;
-
-    const carSeed = seed + 6000 + Math.floor(pz);
-
-    // 20% chance for a car on each side (reduced from 40% for performance)
-    if (seededRandom(carSeed) < 0.2) {
-      const carType = carTypes[Math.floor(seededRandom(carSeed + 1) * carTypes.length)];
-      const carX = worldX + CHUNK_SIZE / 2 - parkingOffset;
-      const carZ = worldZ + pz;
-      const car = spawnParkedCar(carX, carZ, 0, carType, carSeed + 2);
-      chunk.add(car);
-      chunk.userData.objects.push(car);
-      collidableObjects.push(car);
-    }
-
-    if (seededRandom(carSeed + 10) < 0.2) {
-      const carType = carTypes[Math.floor(seededRandom(carSeed + 11) * carTypes.length)];
-      const carX = worldX + CHUNK_SIZE / 2 + parkingOffset;
-      const carZ = worldZ + pz;
-      const car = spawnParkedCar(carX, carZ, Math.PI, carType, carSeed + 12);
-      chunk.add(car);
-      chunk.userData.objects.push(car);
-      collidableObjects.push(car);
-    }
-  }
-
-  // Generate buildings in the four quadrants (avoiding streets in the middle)
+  // Generate buildings FIRST so we can avoid placing cars that overlap
   // Quadrants: NW (0), NE (1), SW (2), SE (3)
   const quadrantSize = (CHUNK_SIZE - streetWidth - sidewalkWidth * 2) / 2;
   const streetBuffer = streetWidth / 2 + sidewalkWidth + 2; // Keep buildings away from street
+  const chunkBuildings = []; // Store building bounds for car collision check
 
   // Place 1 building per quadrant (4 total potential, some may be skipped)
   for (let q = 0; q < 4; q++) {
@@ -3313,14 +3679,43 @@ function createChunk(cx, cz) {
     const quadrantEndX = worldX + (qx === 0 ? CHUNK_SIZE / 2 - streetBuffer : CHUNK_SIZE - 4);
     const quadrantEndZ = worldZ + (qz === 0 ? CHUNK_SIZE / 2 - streetBuffer : CHUNK_SIZE - 4);
 
-    // Random size - keep buildings reasonable for interiors
-    const width = 8 + seededRandom(bSeed + 2) * 4; // 8-12 units wide
-    const height = 4 + seededRandom(bSeed + 3) * 4; // 4-8 units tall (single story)
-    const depth = 8 + seededRandom(bSeed + 4) * 4; // 8-12 units deep
+    // Random building type for variety
+    const buildingType = seededRandom(bSeed + 2);
+    let width, height, depth;
+
+    if (buildingType < 0.2) {
+      // Small shack (20% chance)
+      width = 5 + seededRandom(bSeed + 3) * 3; // 5-8 units wide
+      height = 3 + seededRandom(bSeed + 4) * 2; // 3-5 units tall
+      depth = 5 + seededRandom(bSeed + 5) * 3; // 5-8 units deep
+    } else if (buildingType < 0.5) {
+      // Standard house (30% chance)
+      width = 8 + seededRandom(bSeed + 3) * 4; // 8-12 units wide
+      height = 4 + seededRandom(bSeed + 4) * 3; // 4-7 units tall
+      depth = 8 + seededRandom(bSeed + 5) * 4; // 8-12 units deep
+    } else if (buildingType < 0.75) {
+      // Large house (25% chance)
+      width = 10 + seededRandom(bSeed + 3) * 6; // 10-16 units wide
+      height = 5 + seededRandom(bSeed + 4) * 4; // 5-9 units tall
+      depth = 10 + seededRandom(bSeed + 5) * 6; // 10-16 units deep
+    } else if (buildingType < 0.9) {
+      // Tall narrow building (15% chance)
+      width = 6 + seededRandom(bSeed + 3) * 4; // 6-10 units wide
+      height = 8 + seededRandom(bSeed + 4) * 6; // 8-14 units tall (2-3 stories)
+      depth = 6 + seededRandom(bSeed + 5) * 4; // 6-10 units deep
+    } else {
+      // Wide warehouse (10% chance)
+      width = 14 + seededRandom(bSeed + 3) * 6; // 14-20 units wide
+      height = 5 + seededRandom(bSeed + 4) * 2; // 5-7 units tall
+      depth = 12 + seededRandom(bSeed + 5) * 6; // 12-18 units deep
+    }
 
     // Position building in quadrant (centered)
-    const bx = quadrantStartX + (quadrantEndX - quadrantStartX - width) * seededRandom(bSeed + 5) + width / 2;
-    const bz = quadrantStartZ + (quadrantEndZ - quadrantStartZ - depth) * seededRandom(bSeed + 6) + depth / 2;
+    const bx = quadrantStartX + (quadrantEndX - quadrantStartX - width) * seededRandom(bSeed + 10) + width / 2;
+    const bz = quadrantStartZ + (quadrantEndZ - quadrantStartZ - depth) * seededRandom(bSeed + 11) + depth / 2;
+
+    // Store building bounds for car collision check
+    chunkBuildings.push({ x: bx, z: bz, width, depth });
 
     // Random color
     const colorIndex = Math.floor(seededRandom(bSeed + 7) * BUILDING_COLORS.length);
@@ -3331,6 +3726,90 @@ function createChunk(cx, cz) {
     chunk.add(building);
     chunk.userData.objects.push(building);
     collidableObjects.push(building);
+  }
+
+  // Helper to check if a car position overlaps with any building
+  function carOverlapsBuilding(carX, carZ, carRadius = 3) {
+    for (const b of chunkBuildings) {
+      const halfW = b.width / 2 + carRadius;
+      const halfD = b.depth / 2 + carRadius;
+      if (carX > b.x - halfW && carX < b.x + halfW &&
+          carZ > b.z - halfD && carZ < b.z + halfD) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Add parked cars along streets (AFTER buildings so we can check for overlap)
+  const parkingOffset = streetWidth / 2 - 1.5; // Park on the edge of street
+  const carSpacing = 16; // Space between potential car spots (increased for performance)
+  const carTypes = ['sedan', 'sedan', 'sedan', 'truck', 'sports']; // Weighted distribution
+
+  // Parked cars along horizontal street
+  for (let px = carSpacing; px < CHUNK_SIZE - carSpacing; px += carSpacing) {
+    // Skip intersection area
+    if (Math.abs(px - CHUNK_SIZE / 2) < streetWidth / 2 + 3) continue;
+
+    const carSeed = seed + 5000 + Math.floor(px);
+
+    // 20% chance for a car on each side (reduced from 40% for performance)
+    if (seededRandom(carSeed) < 0.2) {
+      const carType = carTypes[Math.floor(seededRandom(carSeed + 1) * carTypes.length)];
+      const carX = worldX + px;
+      const carZ = worldZ + CHUNK_SIZE / 2 - parkingOffset;
+      if (!carOverlapsBuilding(carX, carZ)) {
+        const car = spawnParkedCar(carX, carZ, Math.PI / 2, carType, carSeed + 2);
+        chunk.add(car);
+        chunk.userData.objects.push(car);
+        collidableObjects.push(car);
+      }
+    }
+
+    if (seededRandom(carSeed + 10) < 0.2) {
+      const carType = carTypes[Math.floor(seededRandom(carSeed + 11) * carTypes.length)];
+      const carX = worldX + px;
+      const carZ = worldZ + CHUNK_SIZE / 2 + parkingOffset;
+      if (!carOverlapsBuilding(carX, carZ)) {
+        const car = spawnParkedCar(carX, carZ, -Math.PI / 2, carType, carSeed + 12);
+        chunk.add(car);
+        chunk.userData.objects.push(car);
+        collidableObjects.push(car);
+      }
+    }
+  }
+
+  // Parked cars along vertical street
+  for (let pz = carSpacing; pz < CHUNK_SIZE - carSpacing; pz += carSpacing) {
+    // Skip intersection area
+    if (Math.abs(pz - CHUNK_SIZE / 2) < streetWidth / 2 + 3) continue;
+
+    const carSeed = seed + 6000 + Math.floor(pz);
+
+    // 20% chance for a car on each side (reduced from 40% for performance)
+    if (seededRandom(carSeed) < 0.2) {
+      const carType = carTypes[Math.floor(seededRandom(carSeed + 1) * carTypes.length)];
+      const carX = worldX + CHUNK_SIZE / 2 - parkingOffset;
+      const carZ = worldZ + pz;
+      if (!carOverlapsBuilding(carX, carZ)) {
+        const car = spawnParkedCar(carX, carZ, 0, carType, carSeed + 2);
+        chunk.add(car);
+        chunk.userData.objects.push(car);
+        collidableObjects.push(car);
+      }
+    }
+
+    if (seededRandom(carSeed + 10) < 0.2) {
+      const carType = carTypes[Math.floor(seededRandom(carSeed + 11) * carTypes.length)];
+      const carX = worldX + CHUNK_SIZE / 2 + parkingOffset;
+      const carZ = worldZ + pz;
+      if (!carOverlapsBuilding(carX, carZ)) {
+        const car = spawnParkedCar(carX, carZ, Math.PI, carType, carSeed + 12);
+        chunk.add(car);
+        chunk.userData.objects.push(car);
+        collidableObjects.push(car);
+      }
+    }
   }
 
   // Add trees using InstancedMesh (much faster than individual meshes)
@@ -4054,6 +4533,15 @@ function shoot() {
   state.ammoInMag--;
   updateAmmoDisplay();
 
+  // Auto-reload when magazine empties
+  if (state.ammoInMag <= 0 && state.ammoReserve > 0 && !state.isReloading) {
+    setTimeout(() => {
+      if (state.ammoInMag <= 0 && !state.isReloading) {
+        reload();
+      }
+    }, 200);
+  }
+
   // Play weapon sound
   playSound(state.currentWeapon);
 
@@ -4185,6 +4673,8 @@ function switchWeapon(weaponType) {
   }
   if (state.currentWeapon === weaponType || state.isReloading) return;
 
+  // Store previous weapon for quick swap
+  state.previousWeapon = state.currentWeapon;
   state.currentWeapon = weaponType;
   const weapon = getEffectiveWeaponStats(weaponType);
   state.ammoInMag = weapon.magSize;
@@ -4193,6 +4683,24 @@ function switchWeapon(weaponType) {
   createWeaponModel(weaponType);
   updateAmmoDisplay();
   updateWeaponDisplay();
+}
+
+function quickSwapWeapon() {
+  if (state.isReloading) return;
+
+  // Swap to previous weapon if we have it
+  if (state.weapons[state.previousWeapon] && state.previousWeapon !== state.currentWeapon) {
+    switchWeapon(state.previousWeapon);
+  } else {
+    // Find another available weapon to swap to
+    const weaponOrder = ['pistol', 'rifle', 'shotgun', 'sniper'];
+    for (const weapon of weaponOrder) {
+      if (state.weapons[weapon] && weapon !== state.currentWeapon) {
+        switchWeapon(weapon);
+        return;
+      }
+    }
+  }
 }
 
 function updateAmmoDisplay() {
@@ -4396,6 +4904,10 @@ function handleDeath(killerName) {
   state.lastKiller = killerName;
   state.deathAnimationPhase = 1;
   deathAnimationStartTime = Date.now();
+
+  // Reset kill streak on death
+  state.killStreak = 0;
+  state.pendingAirstrike = false;
 
   // Store original camera position for animation
   deathCameraStartY = camera.position.y;
@@ -4674,6 +5186,28 @@ document.addEventListener('mousemove', onMouseMove);
 
 document.addEventListener('mousedown', (event) => {
   if (!state.isPlaying || state.isPaused || event.button !== 0) return;
+
+  // Check for pending airstrike
+  if (state.pendingAirstrike) {
+    // Raycast to find target location
+    const direction = new THREE.Vector3(0, 0, -1);
+    direction.applyQuaternion(camera.quaternion);
+    const raycaster = new THREE.Raycaster(camera.position.clone(), direction);
+    const intersects = raycaster.intersectObjects(collidableObjects);
+
+    if (intersects.length > 0) {
+      callAirstrike(intersects[0].point.x, intersects[0].point.z);
+    } else {
+      // Airstrike at distance if no intersection
+      const targetDist = 50;
+      callAirstrike(
+        camera.position.x + direction.x * targetDist,
+        camera.position.z + direction.z * targetDist
+      );
+    }
+    return;
+  }
+
   state.isShooting = true;
   shoot();
 });
@@ -4791,6 +5325,8 @@ document.addEventListener('keydown', (event) => {
     case 'Digit1': switchWeapon('pistol'); break;
     case 'Digit2': switchWeapon('rifle'); break;
     case 'Digit3': switchWeapon('shotgun'); break;
+    case 'Digit4': switchWeapon('sniper'); break;
+    case 'KeyQ': quickSwapWeapon(); break;
   }
 });
 
@@ -4937,6 +5473,8 @@ socket.on('playerDeath', (data) => {
   // Track our kill (PvP only, not enemy kills)
   if (data.killerId === socket.id && !data.isEnemyKill) {
     state.kills++;
+    state.killStreak++;
+    checkKillStreakRewards();
   }
 
   // Update stats for other players
@@ -5113,6 +5651,8 @@ socket.on('enemyDeath', (data) => {
   // Track kill if we killed this enemy
   if (data.killerId === socket.id) {
     state.kills++;
+    state.killStreak++;
+    checkKillStreakRewards();
     // Track weapon kill for attachments
     trackWeaponKill(state.currentWeapon);
   }
@@ -5287,6 +5827,26 @@ socket.on('bossShieldHit', (data) => {
   }
   // Play shield hit sound (different from regular hit)
   playSound('hit');
+});
+
+// Handle server-spawned supply drops
+socket.on('serverSupplyDrop', (data) => {
+  console.log(`Supply drop incoming at (${data.x.toFixed(0)}, ${data.z.toFixed(0)})`);
+  spawnSupplyDrop(data.x, data.z, data.contents);
+});
+
+// Handle player-called supply drops (from kill streaks)
+socket.on('playerSupplyDrop', (data) => {
+  console.log(`Player supply drop at (${data.x.toFixed(0)}, ${data.z.toFixed(0)})`);
+  spawnSupplyDrop(data.x, data.z);
+});
+
+// Handle airstrike effect from other players
+socket.on('airstrikeEffect', (data) => {
+  if (data.playerId !== socket.id) {
+    // Show airstrike effect for other players' airstrikes
+    createAirstrikeEffect(data.x, data.z);
+  }
 });
 
 // Visual effects for boss special attacks
@@ -5582,7 +6142,18 @@ function updateMinimap() {
     }
   }
 
-  // Draw enemies (red dots)
+  // Draw UAV indicator when active
+  if (state.uavActive) {
+    ctx.save();
+    ctx.strokeStyle = '#00ffff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(MINIMAP_CENTER, MINIMAP_CENTER, MINIMAP_CENTER - 2, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Draw enemies (red dots) - show all when UAV is active
   for (const id in state.enemies) {
     const enemy = state.enemies[id];
     if (enemy.data.health <= 0) continue;
@@ -5590,15 +6161,30 @@ function updateMinimap() {
     const pos = worldToMinimap(enemy.data.x, enemy.data.z);
     const dist = Math.sqrt(Math.pow(pos.x - MINIMAP_CENTER, 2) + Math.pow(pos.y - MINIMAP_CENTER, 2));
 
-    if (dist < MINIMAP_CENTER - 5) {
-      // Color based on enemy type
-      switch (enemy.data.type) {
-        case 'heavy': ctx.fillStyle = '#990000'; break;
-        case 'scout': ctx.fillStyle = '#ff6600'; break;
-        default: ctx.fillStyle = '#ff0000';
+    // Show enemies on minimap if close enough OR if UAV is active
+    if (dist < MINIMAP_CENTER - 5 || state.uavActive) {
+      // Clamp position to minimap bounds when UAV is active
+      let drawX = pos.x;
+      let drawY = pos.y;
+      if (dist >= MINIMAP_CENTER - 5) {
+        const angle = Math.atan2(pos.y - MINIMAP_CENTER, pos.x - MINIMAP_CENTER);
+        const clampDist = MINIMAP_CENTER - 8;
+        drawX = MINIMAP_CENTER + Math.cos(angle) * clampDist;
+        drawY = MINIMAP_CENTER + Math.sin(angle) * clampDist;
+      }
+
+      // Color based on enemy type (cyan tint when UAV active)
+      if (state.uavActive) {
+        ctx.fillStyle = '#00ffff';
+      } else {
+        switch (enemy.data.type) {
+          case 'heavy': ctx.fillStyle = '#990000'; break;
+          case 'scout': ctx.fillStyle = '#ff6600'; break;
+          default: ctx.fillStyle = '#ff0000';
+        }
       }
       ctx.beginPath();
-      ctx.arc(pos.x, pos.y, 3, 0, Math.PI * 2);
+      ctx.arc(drawX, drawY, 3, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -5614,6 +6200,35 @@ function updateMinimap() {
     if (dist < MINIMAP_CENTER - 5) {
       ctx.fillStyle = pickup.type === 'health' ? '#27ae60' : '#f39c12';
       ctx.fillRect(pos.x - 2, pos.y - 2, 4, 4);
+    }
+  }
+
+  // Draw supply drops (gold star)
+  for (const id in supplyDrops) {
+    const drop = supplyDrops[id];
+    if (drop.collected) continue;
+
+    const pos = worldToMinimap(drop.x, drop.z);
+    const dist = Math.sqrt(Math.pow(pos.x - MINIMAP_CENTER, 2) + Math.pow(pos.y - MINIMAP_CENTER, 2));
+
+    if (dist < MINIMAP_CENTER - 5) {
+      ctx.save();
+      ctx.translate(pos.x, pos.y);
+      ctx.fillStyle = '#ffd700';
+      ctx.strokeStyle = '#ffaa00';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 0; i < 5; i++) {
+        const angle = (i * 4 * Math.PI / 5) - Math.PI / 2;
+        const x = Math.cos(angle) * 5;
+        const y = Math.sin(angle) * 5;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
     }
   }
 
@@ -5847,8 +6462,27 @@ function animate() {
       const right = new THREE.Vector3();
       right.crossVectors(forward, new THREE.Vector3(0, 1, 0));
 
-      camera.position.addScaledVector(forward, -state.velocity.z * delta);
-      camera.position.addScaledVector(right, state.velocity.x * delta);
+      // Calculate new position
+      const moveForward = forward.clone().multiplyScalar(-state.velocity.z * delta);
+      const moveRight = right.clone().multiplyScalar(state.velocity.x * delta);
+
+      const newX = camera.position.x + moveForward.x + moveRight.x;
+      const newZ = camera.position.z + moveForward.z + moveRight.z;
+
+      // Check collision and apply movement
+      if (!checkBuildingCollision(newX, newZ)) {
+        camera.position.x = newX;
+        camera.position.z = newZ;
+      } else {
+        // Try sliding along walls - check X and Z separately
+        if (!checkBuildingCollision(newX, camera.position.z)) {
+          camera.position.x = newX;
+        }
+        if (!checkBuildingCollision(camera.position.x, newZ)) {
+          camera.position.z = newZ;
+        }
+      }
+
       camera.position.y += state.velocity.y * delta;
 
       if (camera.position.y < PLAYER_HEIGHT) {
@@ -5934,6 +6568,15 @@ function animate() {
 
   // Update pickups (animation and collection)
   updatePickups();
+
+  // Update supply drops
+  updateSupplyDrops();
+
+  // Update UAV timer
+  if (state.uavActive && Date.now() > state.uavEndTime) {
+    state.uavActive = false;
+    showPickupMessage('UAV Expired', '#00ffff');
+  }
 
   // Update weapon pickups
   updateWeaponPickups();

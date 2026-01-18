@@ -714,6 +714,30 @@ let lastUpdate = Date.now();
 let lastSpawnCheck = 0;
 const SPAWN_CHECK_INTERVAL = 2000; // Check every 2 seconds
 
+// Supply drop system
+let lastSupplyDropTime = 0;
+const SUPPLY_DROP_INTERVAL = 60000; // Every 60 seconds
+
+function generateServerSupplyContents() {
+  const contents = [];
+
+  // Always give ammo
+  contents.push({ type: 'ammo', amount: 50 });
+
+  // Random weapon (30% chance)
+  if (Math.random() < 0.3) {
+    const weapons = ['rifle', 'shotgun', 'sniper'];
+    contents.push({ type: 'weapon', weapon: weapons[Math.floor(Math.random() * weapons.length)] });
+  }
+
+  // Health (50% chance)
+  if (Math.random() < 0.5) {
+    contents.push({ type: 'health', amount: 50 });
+  }
+
+  return contents;
+}
+
 setInterval(() => {
   const now = Date.now();
   const delta = (now - lastUpdate) / 1000;
@@ -727,6 +751,27 @@ setInterval(() => {
     despawnFarEnemies();
     spawnEnemiesNearPlayers();
     checkBossRespawns(); // Check if any bosses should respawn
+  }
+
+  // Periodically spawn supply drops
+  const activePlayers = Object.values(players).filter(p => p.active);
+  if (now - lastSupplyDropTime > SUPPLY_DROP_INTERVAL && activePlayers.length > 0) {
+    lastSupplyDropTime = now;
+
+    // Spawn near a random active player
+    const target = activePlayers[Math.floor(Math.random() * activePlayers.length)];
+    const angle = Math.random() * Math.PI * 2;
+    const distance = 30 + Math.random() * 20; // 30-50 units away
+
+    const dropX = target.x + Math.cos(angle) * distance;
+    const dropZ = target.z + Math.sin(angle) * distance;
+
+    console.log(`Spawning supply drop at (${dropX.toFixed(0)}, ${dropZ.toFixed(0)})`);
+    io.emit('serverSupplyDrop', {
+      x: dropX,
+      z: dropZ,
+      contents: generateServerSupplyContents()
+    });
   }
 
   // Broadcast enemy state to all players
@@ -826,6 +871,42 @@ io.on('connection', (socket) => {
     if (players[socket.id] && ['easy', 'normal', 'hard'].includes(data.difficulty)) {
       players[socket.id].difficulty = data.difficulty;
     }
+  });
+
+  // Handle player-called supply drop (from kill streaks)
+  socket.on('supplyDrop', (data) => {
+    io.emit('playerSupplyDrop', {
+      x: data.x,
+      z: data.z,
+      playerId: socket.id
+    });
+  });
+
+  // Handle airstrike (from kill streaks)
+  socket.on('airstrike', (data) => {
+    const AIRSTRIKE_RADIUS = 15;
+    const AIRSTRIKE_DAMAGE = 100;
+
+    console.log(`Airstrike called at (${data.x.toFixed(0)}, ${data.z.toFixed(0)}) by ${socket.id}`);
+
+    // Damage all enemies in radius
+    for (const id in enemies) {
+      const enemy = enemies[id];
+      const dist = Math.sqrt(Math.pow(enemy.x - data.x, 2) + Math.pow(enemy.z - data.z, 2));
+      if (dist <= AIRSTRIKE_RADIUS) {
+        enemy.health -= AIRSTRIKE_DAMAGE;
+        if (enemy.health <= 0) {
+          io.emit('enemyDeath', { enemyId: id, killerId: socket.id });
+          // Respawn enemy after delay
+          setTimeout(() => respawnEnemy(id), 5000);
+        } else {
+          io.emit('enemyHit', { enemyId: id, health: enemy.health });
+        }
+      }
+    }
+
+    // Broadcast airstrike effect to all clients
+    io.emit('airstrikeEffect', { x: data.x, z: data.z, playerId: socket.id });
   });
 
   // Handle shooting
