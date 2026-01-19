@@ -195,46 +195,85 @@ function prevTutorialStep() {
   }
 }
 
-// Tutorial button event listeners (set up after DOM is ready)
-if (tutorialYesBtn) {
-  tutorialYesBtn.addEventListener('click', () => {
-    if (tutorialRememberCheckbox && tutorialRememberCheckbox.checked) {
-      localStorage.setItem('skipTutorial', 'false');
-    }
-    showTutorial();
-  });
+// Tutorial button event listeners - set up when DOM is ready
+function setupTutorialListeners() {
+  console.log('Setting up tutorial listeners...');
+
+  const yesBtn = document.getElementById('tutorial-yes');
+  const noBtn = document.getElementById('tutorial-no');
+  const nextBtn = document.getElementById('tutorial-next');
+  const prevBtn = document.getElementById('tutorial-prev');
+  const skipBtn = document.getElementById('tutorial-skip');
+  const resetBtn = document.getElementById('tutorial-reset');
+  const rememberCheckbox = document.getElementById('tutorial-remember-checkbox');
+
+  console.log('Tutorial buttons found:', { yesBtn: !!yesBtn, noBtn: !!noBtn, nextBtn: !!nextBtn });
+
+  if (yesBtn) {
+    yesBtn.addEventListener('click', (e) => {
+      console.log('Yes button clicked!');
+      e.stopPropagation();
+      if (rememberCheckbox && rememberCheckbox.checked) {
+        localStorage.setItem('skipTutorial', 'false');
+      }
+      showTutorial();
+    });
+  }
+
+  if (noBtn) {
+    noBtn.addEventListener('click', (e) => {
+      console.log('No button clicked!');
+      e.stopPropagation();
+      if (rememberCheckbox && rememberCheckbox.checked) {
+        localStorage.setItem('skipTutorial', 'true');
+      }
+      hideTutorialPrompt();
+      if (pendingGameStart) {
+        pendingGameStart();
+        pendingGameStart = null;
+      }
+    });
+  }
+
+  if (nextBtn) {
+    nextBtn.addEventListener('click', (e) => {
+      console.log('Next button clicked!');
+      e.stopPropagation();
+      nextTutorialStep();
+    });
+  }
+
+  if (prevBtn) {
+    prevBtn.addEventListener('click', (e) => {
+      console.log('Prev button clicked!');
+      e.stopPropagation();
+      prevTutorialStep();
+    });
+  }
+
+  if (skipBtn) {
+    skipBtn.addEventListener('click', (e) => {
+      console.log('Skip button clicked!');
+      e.stopPropagation();
+      hideTutorial();
+    });
+  }
+
+  if (resetBtn) {
+    resetBtn.addEventListener('click', (e) => {
+      console.log('Reset button clicked!');
+      e.stopPropagation();
+      localStorage.removeItem('skipTutorial');
+      alert('Tutorial preference reset! You will be asked about the tutorial next time you start a game.');
+    });
+  }
 }
 
-if (tutorialNoBtn) {
-  tutorialNoBtn.addEventListener('click', () => {
-    if (tutorialRememberCheckbox && tutorialRememberCheckbox.checked) {
-      localStorage.setItem('skipTutorial', 'true');
-    }
-    hideTutorialPrompt();
-    if (pendingGameStart) {
-      pendingGameStart();
-      pendingGameStart = null;
-    }
-  });
-}
-
-if (tutorialNextBtn) {
-  tutorialNextBtn.addEventListener('click', nextTutorialStep);
-}
-
-if (tutorialPrevBtn) {
-  tutorialPrevBtn.addEventListener('click', prevTutorialStep);
-}
-
-if (tutorialSkipBtn) {
-  tutorialSkipBtn.addEventListener('click', hideTutorial);
-}
-
-if (tutorialResetBtn) {
-  tutorialResetBtn.addEventListener('click', () => {
-    localStorage.removeItem('skipTutorial');
-    alert('Tutorial preference reset! You will be asked about the tutorial next time you start a game.');
-  });
+// Set up listeners when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', setupTutorialListeners);
+} else {
+  setupTutorialListeners();
 }
 
 // ==================== AUDIO SYSTEM ====================
@@ -4769,12 +4808,6 @@ function removeChunk(cx, cz) {
   chunk.userData.objects.forEach(obj => {
     const idx = collidableObjects.indexOf(obj);
     if (idx > -1) collidableObjects.splice(idx, 1);
-  });
-
-  // Remove streetlights in this chunk from the global array
-  chunk.children.forEach(child => {
-    const idx = streetlights.indexOf(child);
-    if (idx > -1) streetlights.splice(idx, 1);
   });
 
   // Remove parked cars in this chunk from the global array
