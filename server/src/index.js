@@ -1989,6 +1989,190 @@ io.on('connection', (socket) => {
     });
   });
 
+  // ==================== GRENADE HANDLERS ====================
+
+  // Handle grenade throw - broadcast to other players
+  socket.on('grenadeThrow', (data) => {
+    socket.broadcast.emit('playerGrenadeThrow', {
+      playerId: socket.id,
+      position: data.position,
+      velocity: data.velocity
+    });
+  });
+
+  // Handle grenade explosion - apply damage to enemies
+  socket.on('grenadeExplosion', (data) => {
+    const { position, radius, maxDamage, minDamage } = data;
+
+    // Check all enemies for damage
+    for (const enemyId in enemies) {
+      const enemy = enemies[enemyId];
+      const dist = Math.sqrt(
+        Math.pow(enemy.x - position.x, 2) +
+        Math.pow(enemy.z - position.z, 2)
+      );
+
+      if (dist < radius) {
+        // Calculate damage based on distance
+        const damagePercent = 1 - (dist / radius);
+        const damage = Math.round(minDamage + (maxDamage - minDamage) * damagePercent);
+
+        // Apply damage to enemy
+        if (enemy.isBoss && enemy.type === 'mechBoss' && enemy.shield > 0) {
+          const shieldDamage = Math.min(enemy.shield, damage);
+          enemy.shield -= shieldDamage;
+          const remainingDamage = damage - shieldDamage;
+          if (remainingDamage > 0) {
+            enemy.health -= remainingDamage;
+          }
+        } else {
+          enemy.health -= damage;
+        }
+
+        // Emit hit event
+        io.emit('enemyHit', {
+          enemyId: enemyId,
+          damage: damage,
+          health: enemy.health,
+          shield: enemy.shield || 0,
+          isBoss: enemy.isBoss
+        });
+
+        // Check for death
+        if (enemy.health <= 0) {
+          if (enemy.isBoss) {
+            bossDeathTimes[enemy.type] = Date.now();
+            delete activeBosses[enemy.type];
+
+            io.emit('bossDeath', {
+              bossId: enemyId,
+              bossType: enemy.type,
+              killerId: socket.id,
+              killerName: players[socket.id]?.name || 'Unknown',
+              x: enemy.x,
+              z: enemy.z,
+              loot: getBossLoot(enemy.type)
+            });
+
+            const bossXP = XP_CONFIG.perBoss[enemy.type] || 300;
+            awardXP(socket.id, bossXP, `Defeated ${enemy.type}`);
+            delete enemies[enemyId];
+          } else {
+            io.emit('enemyDeath', {
+              enemyId: enemyId,
+              killerId: socket.id
+            });
+
+            const enemyXP = XP_CONFIG.perKill[enemy.type] || 50;
+            awardXP(socket.id, enemyXP, `Killed ${enemy.type}`);
+            delete enemies[enemyId];
+          }
+        }
+      }
+    }
+  });
+
+  // ==================== MELEE HANDLERS ====================
+
+  // Handle melee hit on enemy
+  socket.on('meleeHitEnemy', (data) => {
+    const enemy = enemies[data.enemyId];
+    if (!enemy) return;
+
+    let actualDamage = data.damage;
+
+    // Mech boss has shields
+    if (enemy.type === 'mechBoss' && enemy.shield > 0) {
+      const shieldDamage = Math.min(enemy.shield, actualDamage);
+      enemy.shield -= shieldDamage;
+      actualDamage -= shieldDamage;
+
+      if (shieldDamage > 0) {
+        io.emit('bossShieldHit', {
+          bossId: data.enemyId,
+          shieldDamage: shieldDamage,
+          remainingShield: enemy.shield
+        });
+      }
+    }
+
+    // Apply remaining damage to health
+    if (actualDamage > 0) {
+      enemy.health -= actualDamage;
+    }
+
+    io.emit('enemyHit', {
+      enemyId: data.enemyId,
+      damage: data.damage,
+      health: enemy.health,
+      shield: enemy.shield || 0,
+      isBoss: enemy.isBoss,
+      isMelee: true,
+      isBackstab: data.isBackstab
+    });
+
+    if (enemy.health <= 0) {
+      const killMethod = data.isBackstab ? 'backstabbed' : 'knifed';
+      console.log(`Enemy ${data.enemyId} was ${killMethod} by ${socket.id}`);
+
+      if (enemy.isBoss) {
+        bossDeathTimes[enemy.type] = Date.now();
+        delete activeBosses[enemy.type];
+
+        io.emit('bossDeath', {
+          bossId: data.enemyId,
+          bossType: enemy.type,
+          killerId: socket.id,
+          killerName: players[socket.id]?.name || 'Unknown',
+          x: enemy.x,
+          z: enemy.z,
+          loot: getBossLoot(enemy.type)
+        });
+
+        const bossXP = XP_CONFIG.perBoss[enemy.type] || 300;
+        awardXP(socket.id, bossXP, `${killMethod} ${enemy.type}`);
+        delete enemies[data.enemyId];
+      } else {
+        io.emit('enemyDeath', {
+          enemyId: data.enemyId,
+          killerId: socket.id,
+          isMelee: true,
+          isBackstab: data.isBackstab
+        });
+
+        // Bonus XP for melee kills
+        const baseXP = XP_CONFIG.perKill[enemy.type] || 50;
+        const meleeBonus = data.isBackstab ? 2 : 1.5;
+        awardXP(socket.id, Math.round(baseXP * meleeBonus), `${killMethod} ${enemy.type}`);
+        delete enemies[data.enemyId];
+      }
+    }
+  });
+
+  // Handle melee hit on player (PvP)
+  socket.on('meleeHit', (data) => {
+    const target = players[data.targetId];
+    if (!target) return;
+
+    io.to(data.targetId).emit('playerHit', {
+      damage: data.damage,
+      attackerId: socket.id,
+      attackerName: players[socket.id]?.name || 'Unknown',
+      isMelee: true,
+      isBackstab: data.isBackstab
+    });
+
+    // Broadcast melee attack to all players for kill feed
+    io.emit('meleeAttack', {
+      attackerId: socket.id,
+      attackerName: players[socket.id]?.name || 'Unknown',
+      targetId: data.targetId,
+      targetName: target.name || 'Unknown',
+      damage: data.damage,
+      isBackstab: data.isBackstab
+    });
+  });
+
   // ==================== NPC INTERACTION HANDLERS ====================
 
   // Player initiates dialogue with NPC

@@ -18,7 +18,9 @@ const LOADING_TIPS = [
   'TIP: Headshots deal extra damage',
   'TIP: Press <span>E</span> to enter vehicles and search crates',
   'TIP: Health pickups restore 50 HP',
-  'TIP: Press <span>L</span> to view your perks'
+  'TIP: Press <span>L</span> to view your perks',
+  'TIP: Hold <span>G</span> to aim grenades, release to throw',
+  'TIP: Press <span>V</span> for a quick knife attack'
 ];
 
 function updateLoadingProgress(percent, text) {
@@ -691,6 +693,101 @@ function playSound(type, options = {}) {
       osc.stop(now + 0.15);
       break;
     }
+
+    case 'melee': {
+      // Knife slash sound - quick whoosh with metallic edge
+      const osc = audioCtx.createOscillator();
+      const osc2 = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const gain2 = audioCtx.createGain();
+      const filter = audioCtx.createBiquadFilter();
+
+      // Whoosh
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(800, now);
+      osc.frequency.exponentialRampToValueAtTime(200, now + 0.15);
+
+      // Metallic ring
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(2000, now);
+      osc2.frequency.exponentialRampToValueAtTime(800, now + 0.1);
+
+      filter.type = 'highpass';
+      filter.frequency.setValueAtTime(500, now);
+
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+
+      gain2.gain.setValueAtTime(0.1, now);
+      gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      osc2.connect(gain2);
+      gain.connect(audioCtx.destination);
+      gain2.connect(audioCtx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.15);
+      osc2.start(now);
+      osc2.stop(now + 0.1);
+      break;
+    }
+
+    case 'explosion': {
+      // Explosion sound - deep boom with rumble
+      const osc = audioCtx.createOscillator();
+      const osc2 = audioCtx.createOscillator();
+      const osc3 = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const gain2 = audioCtx.createGain();
+      const gain3 = audioCtx.createGain();
+      const filter = audioCtx.createBiquadFilter();
+
+      // Main boom
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(60, now);
+      osc.frequency.exponentialRampToValueAtTime(20, now + 0.5);
+
+      // Sub bass rumble
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(40, now);
+      osc2.frequency.exponentialRampToValueAtTime(15, now + 0.8);
+
+      // High frequency crack
+      osc3.type = 'square';
+      osc3.frequency.setValueAtTime(300, now);
+      osc3.frequency.exponentialRampToValueAtTime(50, now + 0.1);
+
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(400, now);
+      filter.frequency.exponentialRampToValueAtTime(50, now + 0.5);
+
+      gain.gain.setValueAtTime(0.5, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+
+      gain2.gain.setValueAtTime(0.4, now);
+      gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.8);
+
+      gain3.gain.setValueAtTime(0.3, now);
+      gain3.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      osc2.connect(gain2);
+      osc3.connect(gain3);
+      gain.connect(audioCtx.destination);
+      gain2.connect(audioCtx.destination);
+      gain3.connect(audioCtx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.5);
+      osc2.start(now);
+      osc2.stop(now + 0.8);
+      osc3.start(now);
+      osc3.stop(now + 0.1);
+      break;
+    }
   }
 }
 
@@ -1011,6 +1108,418 @@ const PERKS = {
   juggernaut: { level: 8, name: 'Juggernaut', description: '15% less damage taken', effect: 'damageTaken', value: 0.85 },
   doubleTime: { level: 10, name: 'Double Time', description: 'Sprint duration doubled', effect: 'sprintDuration', value: 2.0 }
 };
+
+// ==================== SHOP SYSTEM ====================
+
+const SHOP_CONFIG = {
+  // Kill point rewards
+  rewards: {
+    enemyKill: 10,
+    playerKill: 25,
+    bossKill: 100
+  },
+
+  // Shop categories and items
+  weaponSkins: {
+    pistol_gold: { name: 'Gold Pistol', weapon: 'pistol', color: 0xffd700, price: 200 },
+    pistol_red: { name: 'Red Pistol', weapon: 'pistol', color: 0xe74c3c, price: 100 },
+    pistol_blue: { name: 'Blue Pistol', weapon: 'pistol', color: 0x3498db, price: 100 },
+    rifle_gold: { name: 'Gold Rifle', weapon: 'rifle', color: 0xffd700, price: 300 },
+    rifle_camo: { name: 'Camo Rifle', weapon: 'rifle', color: 0x556b2f, price: 200 },
+    rifle_neon: { name: 'Neon Rifle', weapon: 'rifle', color: 0x00ff00, price: 250 },
+    shotgun_gold: { name: 'Gold Shotgun', weapon: 'shotgun', color: 0xffd700, price: 400 },
+    shotgun_chrome: { name: 'Chrome Shotgun', weapon: 'shotgun', color: 0xc0c0c0, price: 300 },
+    sniper_gold: { name: 'Gold Sniper', weapon: 'sniper', color: 0xffd700, price: 500 },
+    sniper_arctic: { name: 'Arctic Sniper', weapon: 'sniper', color: 0xe0ffff, price: 350 }
+  },
+
+  characterSkins: {
+    char_red: { name: 'Red Soldier', color: 0xe74c3c, price: 150 },
+    char_blue: { name: 'Blue Soldier', color: 0x3498db, price: 150 },
+    char_green: { name: 'Green Soldier', color: 0x27ae60, price: 150 },
+    char_purple: { name: 'Purple Soldier', color: 0x9b59b6, price: 200 },
+    char_gold: { name: 'Gold Soldier', color: 0xffd700, price: 500 },
+    char_black: { name: 'Shadow Soldier', color: 0x1a1a1a, price: 300 },
+    char_white: { name: 'Arctic Soldier', color: 0xecf0f1, price: 250 }
+  },
+
+  startingLoadouts: {
+    loadout_rifle: { name: 'Start with Rifle', weapon: 'rifle', price: 300 },
+    loadout_shotgun: { name: 'Start with Shotgun', weapon: 'shotgun', price: 400 },
+    loadout_sniper: { name: 'Start with Sniper', weapon: 'sniper', price: 500 },
+    loadout_all: { name: 'Start with All Weapons', weapon: 'all', price: 1000 }
+  },
+
+  permanentUpgrades: {
+    upgrade_health: { name: '+20 Max Health', effect: 'maxHealth', value: 20, price: 400, max: 3 },
+    upgrade_armor: { name: '+20 Max Armor', effect: 'maxArmor', value: 20, price: 350, max: 3 },
+    upgrade_speed: { name: '+10% Move Speed', effect: 'moveSpeed', value: 0.1, price: 500, max: 2 },
+    upgrade_reload: { name: '-15% Reload Time', effect: 'reloadSpeed', value: 0.15, price: 450, max: 2 },
+    upgrade_damage: { name: '+10% Damage', effect: 'damageBonus', value: 0.1, price: 600, max: 2 }
+  },
+
+  consumables: {
+    consumable_armor: { name: 'Starting Armor (50)', effect: 'startArmor', value: 50, price: 50 },
+    consumable_ammo: { name: 'Extra Ammo (+100)', effect: 'startAmmo', value: 100, price: 30 },
+    consumable_health: { name: 'Bonus Health (+25)', effect: 'startHealth', value: 25, price: 40 }
+  }
+};
+
+// Shop state (loaded from localStorage)
+let shopData = {
+  killPoints: 0,
+  ownedItems: [],
+  equippedSkins: { pistol: null, rifle: null, shotgun: null, sniper: null, character: null },
+  equippedLoadout: null,
+  upgradesPurchased: {},
+  consumablesOwned: {}
+};
+
+function loadShopData() {
+  const saved = localStorage.getItem('combatShopData');
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      shopData = { ...shopData, ...parsed };
+    } catch (e) {
+      console.error('Failed to load shop data:', e);
+    }
+  }
+  updateKillPointsDisplay();
+}
+
+function saveShopData() {
+  localStorage.setItem('combatShopData', JSON.stringify(shopData));
+  updateKillPointsDisplay();
+}
+
+function addKillPoints(amount, reason) {
+  shopData.killPoints += amount;
+  saveShopData();
+
+  // Show notification
+  const popup = document.createElement('div');
+  popup.className = 'kp-popup';
+  popup.innerHTML = `+${amount} KP<br><small>${reason}</small>`;
+  popup.style.cssText = `
+    position: fixed;
+    top: 50%;
+    right: 20px;
+    transform: translateY(-50%);
+    background: linear-gradient(135deg, #f39c12, #e67e22);
+    color: white;
+    padding: 10px 20px;
+    border-radius: 5px;
+    font-weight: bold;
+    z-index: 1000;
+    animation: slideIn 0.3s ease-out;
+  `;
+  document.body.appendChild(popup);
+  setTimeout(() => {
+    popup.style.animation = 'fadeOut 0.3s ease-out';
+    setTimeout(() => popup.remove(), 300);
+  }, 1500);
+}
+
+function updateKillPointsDisplay() {
+  const kpDisplay = document.getElementById('kill-points-display');
+  if (kpDisplay) {
+    kpDisplay.textContent = `${shopData.killPoints} KP`;
+  }
+  const shopKp = document.getElementById('shop-kill-points');
+  if (shopKp) {
+    shopKp.textContent = `${shopData.killPoints} KP`;
+  }
+}
+
+function purchaseItem(category, itemId) {
+  const categories = {
+    weaponSkins: SHOP_CONFIG.weaponSkins,
+    characterSkins: SHOP_CONFIG.characterSkins,
+    startingLoadouts: SHOP_CONFIG.startingLoadouts,
+    permanentUpgrades: SHOP_CONFIG.permanentUpgrades,
+    consumables: SHOP_CONFIG.consumables
+  };
+
+  const item = categories[category]?.[itemId];
+  if (!item) return { success: false, message: 'Item not found' };
+
+  // Check if already owned (except consumables and upgrades with max)
+  if (category !== 'consumables' && category !== 'permanentUpgrades') {
+    if (shopData.ownedItems.includes(itemId)) {
+      return { success: false, message: 'Already owned' };
+    }
+  }
+
+  // Check upgrade max purchases
+  if (category === 'permanentUpgrades') {
+    const purchased = shopData.upgradesPurchased[itemId] || 0;
+    if (purchased >= item.max) {
+      return { success: false, message: 'Max level reached' };
+    }
+  }
+
+  // Check if can afford
+  if (shopData.killPoints < item.price) {
+    return { success: false, message: 'Not enough Kill Points' };
+  }
+
+  // Purchase
+  shopData.killPoints -= item.price;
+
+  if (category === 'consumables') {
+    shopData.consumablesOwned[itemId] = (shopData.consumablesOwned[itemId] || 0) + 1;
+  } else if (category === 'permanentUpgrades') {
+    shopData.upgradesPurchased[itemId] = (shopData.upgradesPurchased[itemId] || 0) + 1;
+  } else {
+    shopData.ownedItems.push(itemId);
+  }
+
+  saveShopData();
+  return { success: true, message: 'Purchased!' };
+}
+
+function equipItem(category, itemId) {
+  if (category === 'weaponSkins') {
+    const item = SHOP_CONFIG.weaponSkins[itemId];
+    if (item && shopData.ownedItems.includes(itemId)) {
+      shopData.equippedSkins[item.weapon] = itemId;
+      saveShopData();
+      return true;
+    }
+  } else if (category === 'characterSkins') {
+    if (shopData.ownedItems.includes(itemId)) {
+      shopData.equippedSkins.character = itemId;
+      saveShopData();
+      return true;
+    }
+  } else if (category === 'startingLoadouts') {
+    if (shopData.ownedItems.includes(itemId)) {
+      shopData.equippedLoadout = itemId;
+      saveShopData();
+      return true;
+    }
+  }
+  return false;
+}
+
+function applyShopBonuses() {
+  // Apply permanent upgrades
+  let bonusHealth = 0;
+  let bonusArmor = 0;
+  let moveSpeedMult = 1;
+  let reloadSpeedMult = 1;
+  let damageMult = 1;
+
+  for (const [upgradeId, count] of Object.entries(shopData.upgradesPurchased)) {
+    const upgrade = SHOP_CONFIG.permanentUpgrades[upgradeId];
+    if (!upgrade) continue;
+
+    for (let i = 0; i < count; i++) {
+      switch (upgrade.effect) {
+        case 'maxHealth': bonusHealth += upgrade.value; break;
+        case 'maxArmor': bonusArmor += upgrade.value; break;
+        case 'moveSpeed': moveSpeedMult += upgrade.value; break;
+        case 'reloadSpeed': reloadSpeedMult -= upgrade.value; break;
+        case 'damageBonus': damageMult += upgrade.value; break;
+      }
+    }
+  }
+
+  // Store bonuses in state for use during gameplay
+  state.shopBonuses = {
+    maxHealth: 100 + bonusHealth,
+    maxArmor: 100 + bonusArmor,
+    moveSpeedMult,
+    reloadSpeedMult: Math.max(0.5, reloadSpeedMult),
+    damageMult
+  };
+
+  // Apply starting loadout
+  if (shopData.equippedLoadout) {
+    const loadout = SHOP_CONFIG.startingLoadouts[shopData.equippedLoadout];
+    if (loadout) {
+      if (loadout.weapon === 'all') {
+        state.weapons = { pistol: true, rifle: true, shotgun: true, sniper: true };
+      } else {
+        state.weapons[loadout.weapon] = true;
+      }
+    }
+  }
+
+  // Apply consumables (one-time use)
+  for (const [consumableId, count] of Object.entries(shopData.consumablesOwned)) {
+    if (count > 0) {
+      const consumable = SHOP_CONFIG.consumables[consumableId];
+      if (consumable) {
+        switch (consumable.effect) {
+          case 'startArmor':
+            state.armor = Math.min(state.maxArmor, state.armor + consumable.value);
+            break;
+          case 'startAmmo':
+            state.ammoReserve += consumable.value;
+            break;
+          case 'startHealth':
+            state.health = Math.min(state.shopBonuses.maxHealth, state.health + consumable.value);
+            break;
+        }
+        shopData.consumablesOwned[consumableId]--;
+      }
+    }
+  }
+  saveShopData();
+}
+
+// Shop UI functions
+let currentShopCategory = 'weaponSkins';
+
+function openShop() {
+  document.getElementById('shop-overlay').classList.remove('hidden');
+  renderShopItems(currentShopCategory);
+  updateKillPointsDisplay();
+}
+
+function closeShop() {
+  document.getElementById('shop-overlay').classList.add('hidden');
+}
+
+function renderShopItems(category) {
+  currentShopCategory = category;
+  const container = document.getElementById('shop-items');
+  container.innerHTML = '';
+
+  // Update category button states
+  document.querySelectorAll('.shop-cat-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.category === category);
+  });
+
+  const categories = {
+    weaponSkins: SHOP_CONFIG.weaponSkins,
+    characterSkins: SHOP_CONFIG.characterSkins,
+    startingLoadouts: SHOP_CONFIG.startingLoadouts,
+    permanentUpgrades: SHOP_CONFIG.permanentUpgrades,
+    consumables: SHOP_CONFIG.consumables
+  };
+
+  const items = categories[category];
+  if (!items) return;
+
+  for (const [itemId, item] of Object.entries(items)) {
+    const isOwned = shopData.ownedItems.includes(itemId);
+    const isEquipped = checkIfEquipped(category, itemId);
+    const purchaseCount = category === 'permanentUpgrades' ? (shopData.upgradesPurchased[itemId] || 0) : 0;
+    const consumableCount = category === 'consumables' ? (shopData.consumablesOwned[itemId] || 0) : 0;
+    const maxedOut = category === 'permanentUpgrades' && purchaseCount >= item.max;
+
+    const itemEl = document.createElement('div');
+    itemEl.className = `shop-item${isOwned ? ' owned' : ''}${isEquipped ? ' equipped' : ''}`;
+
+    // Preview color
+    const previewColor = item.color ? `#${item.color.toString(16).padStart(6, '0')}` : '#888';
+
+    let buttonHtml = '';
+    let priceHtml = '';
+
+    if (category === 'consumables') {
+      priceHtml = `<div class="shop-item-price">${item.price} KP</div>`;
+      buttonHtml = `<button class="shop-item-btn buy" data-category="${category}" data-item="${itemId}">Buy</button>`;
+      if (consumableCount > 0) {
+        priceHtml += `<div class="shop-item-count">Owned: ${consumableCount}</div>`;
+      }
+    } else if (category === 'permanentUpgrades') {
+      if (maxedOut) {
+        priceHtml = `<div class="shop-item-price owned">MAX (${purchaseCount}/${item.max})</div>`;
+        buttonHtml = `<button class="shop-item-btn" disabled>Maxed</button>`;
+      } else {
+        priceHtml = `<div class="shop-item-price">${item.price} KP (${purchaseCount}/${item.max})</div>`;
+        buttonHtml = `<button class="shop-item-btn buy" data-category="${category}" data-item="${itemId}">Buy</button>`;
+      }
+    } else if (isOwned) {
+      priceHtml = `<div class="shop-item-price owned">Owned</div>`;
+      if (isEquipped) {
+        buttonHtml = `<button class="shop-item-btn equipped">Equipped</button>`;
+      } else {
+        buttonHtml = `<button class="shop-item-btn equip" data-category="${category}" data-item="${itemId}">Equip</button>`;
+      }
+    } else {
+      priceHtml = `<div class="shop-item-price">${item.price} KP</div>`;
+      buttonHtml = `<button class="shop-item-btn buy" data-category="${category}" data-item="${itemId}">Buy</button>`;
+    }
+
+    itemEl.innerHTML = `
+      <div class="shop-item-preview" style="background: ${previewColor}"></div>
+      <div class="shop-item-name">${item.name}</div>
+      ${priceHtml}
+      ${buttonHtml}
+    `;
+
+    container.appendChild(itemEl);
+  }
+
+  // Add click handlers
+  container.querySelectorAll('.shop-item-btn.buy').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const result = purchaseItem(btn.dataset.category, btn.dataset.item);
+      showShopMessage(result.message, result.success);
+      if (result.success) {
+        renderShopItems(currentShopCategory);
+      }
+    });
+  });
+
+  container.querySelectorAll('.shop-item-btn.equip').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const success = equipItem(btn.dataset.category, btn.dataset.item);
+      showShopMessage(success ? 'Equipped!' : 'Failed to equip', success);
+      renderShopItems(currentShopCategory);
+    });
+  });
+}
+
+function checkIfEquipped(category, itemId) {
+  if (category === 'weaponSkins') {
+    const item = SHOP_CONFIG.weaponSkins[itemId];
+    return item && shopData.equippedSkins[item.weapon] === itemId;
+  } else if (category === 'characterSkins') {
+    return shopData.equippedSkins.character === itemId;
+  } else if (category === 'startingLoadouts') {
+    return shopData.equippedLoadout === itemId;
+  }
+  return false;
+}
+
+function showShopMessage(message, success = true) {
+  const msgEl = document.getElementById('shop-message');
+  msgEl.textContent = message;
+  msgEl.style.color = success ? '#27ae60' : '#e74c3c';
+  setTimeout(() => { msgEl.textContent = ''; }, 2000);
+}
+
+function setupShopListeners() {
+  // Open shop button
+  document.getElementById('open-shop-btn')?.addEventListener('click', openShop);
+
+  // Close shop button
+  document.getElementById('close-shop-btn')?.addEventListener('click', closeShop);
+
+  // Category buttons
+  document.querySelectorAll('.shop-cat-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      renderShopItems(btn.dataset.category);
+    });
+  });
+
+  // Close on overlay click
+  document.getElementById('shop-overlay')?.addEventListener('click', (e) => {
+    if (e.target.id === 'shop-overlay') closeShop();
+  });
+}
+
+// Initialize shop on DOMContentLoaded
+document.addEventListener('DOMContentLoaded', () => {
+  loadShopData();
+  setupShopListeners();
+});
 
 // Update XP bar display
 function updateXPBar() {
@@ -1395,6 +1904,8 @@ const state = {
   isPaused: false,
   difficulty: 'normal',
   health: 100,
+  armor: 0,
+  maxArmor: 100,
   moveForward: false,
   moveBackward: false,
   moveLeft: false,
@@ -1428,6 +1939,14 @@ const state = {
   uavActive: false,
   uavEndTime: 0,
   pendingAirstrike: false,
+  // Shop bonuses (applied at game start)
+  shopBonuses: {
+    maxHealth: 100,
+    maxArmor: 100,
+    moveSpeedMult: 1,
+    reloadSpeedMult: 1,
+    damageMult: 1
+  },
   // Vehicle state
   inVehicle: false,
   currentVehicle: null,
@@ -1473,7 +1992,18 @@ const state = {
   nextLevelXp: 100,
   perks: [],
   availablePerks: [],
-  perkMenuOpen: false
+  perkMenuOpen: false,
+  // Grenade system
+  grenadeCount: 3,
+  maxGrenades: 5,
+  isHoldingGrenade: false,
+  grenadeHoldStart: 0,
+  grenadeTrajectoryLine: null,
+  activeGrenades: [],
+  // Melee system
+  canMelee: true,
+  isMeleeing: false,
+  meleeAnimationTime: 0
 };
 
 // ==================== GAME MODE 3D OBJECTS ====================
@@ -2930,6 +3460,12 @@ const PICKUP_TYPES = {
     glowColor: 0xf1c40f,
     value: 30,
     label: '+30 Ammo'
+  },
+  armor: {
+    color: 0x3498db,
+    glowColor: 0x5dade2,
+    value: 25,
+    label: '+25 Armor'
   }
 };
 
@@ -3281,9 +3817,57 @@ function createAmmoBoxMesh() {
   return group;
 }
 
+function createArmorPickupMesh() {
+  const group = new THREE.Group();
+
+  // Shield-shaped armor pickup
+  const shieldGeo = new THREE.CylinderGeometry(0.4, 0.5, 0.8, 6);
+  const shieldMat = new THREE.MeshStandardMaterial({
+    color: 0x3498db,
+    metalness: 0.7,
+    roughness: 0.3
+  });
+  const shield = new THREE.Mesh(shieldGeo, shieldMat);
+  shield.position.y = 0.5;
+  shield.castShadow = false;
+  group.add(shield);
+
+  // Inner ring decoration
+  const ringGeo = new THREE.TorusGeometry(0.25, 0.05, 8, 16);
+  const ringMat = new THREE.MeshStandardMaterial({
+    color: 0x5dade2,
+    metalness: 0.8,
+    roughness: 0.2
+  });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.position.set(0, 0.5, 0.41);
+  group.add(ring);
+
+  // Glow effect
+  const glowGeo = new THREE.SphereGeometry(0.7, 16, 16);
+  const glowMat = new THREE.MeshBasicMaterial({
+    color: 0x3498db,
+    transparent: true,
+    opacity: 0.25
+  });
+  const glow = new THREE.Mesh(glowGeo, glowMat);
+  glow.position.y = 0.5;
+  glow.name = 'glow';
+  group.add(glow);
+
+  group.userData.type = 'armor';
+  group.userData.isPickup = true;
+
+  return group;
+}
+
 function spawnPickup(type, x, z) {
   const id = `pickup_${pickupIdCounter++}`;
-  const mesh = type === 'health' ? createHealthPackMesh() : createAmmoBoxMesh();
+  let mesh;
+  if (type === 'health') mesh = createHealthPackMesh();
+  else if (type === 'ammo') mesh = createAmmoBoxMesh();
+  else if (type === 'armor') mesh = createArmorPickupMesh();
+  else mesh = createAmmoBoxMesh(); // fallback
   mesh.position.set(x, 0, z);
   mesh.userData.pickupId = id;
 
@@ -3314,8 +3898,12 @@ function spawnChunkPickups(cx, cz, seed) {
     const px = worldX + 5 + seededRandom(pSeed) * (CHUNK_SIZE - 10);
     const pz = worldZ + 5 + seededRandom(pSeed + 1) * (CHUNK_SIZE - 10);
 
-    // 60% health, 40% ammo
-    const type = seededRandom(pSeed + 2) < 0.6 ? 'health' : 'ammo';
+    // 50% health, 35% ammo, 15% armor
+    const roll = seededRandom(pSeed + 2);
+    let type;
+    if (roll < 0.5) type = 'health';
+    else if (roll < 0.85) type = 'ammo';
+    else type = 'armor';
     spawnPickup(type, px, pz);
   }
 
@@ -3355,6 +3943,11 @@ function collectPickup(pickup) {
     updateAmmoDisplay();
     playSound('pickupAmmo');
     showPickupMessage(type.label, '#f39c12');
+  } else if (pickup.type === 'armor') {
+    state.armor = Math.min(state.maxArmor, state.armor + type.value);
+    updateArmorBar();
+    playSound('pickup');
+    showPickupMessage(type.label, '#3498db');
   }
 
   // Respawn after 30 seconds
@@ -4181,10 +4774,12 @@ let lootContainerIdCounter = 0;
 const LOOT_SEARCH_DISTANCE = 2.5;
 
 const LOOT_TYPES = [
-  { type: 'health', chance: 0.3, amount: 25 },
-  { type: 'ammo', chance: 0.4, amount: 20 },
-  { type: 'bigHealth', chance: 0.15, amount: 50 },
-  { type: 'bigAmmo', chance: 0.15, amount: 40 }
+  { type: 'health', chance: 0.25, amount: 25 },
+  { type: 'ammo', chance: 0.35, amount: 20 },
+  { type: 'bigHealth', chance: 0.1, amount: 50 },
+  { type: 'bigAmmo', chance: 0.1, amount: 40 },
+  { type: 'armor', chance: 0.15, amount: 25 },
+  { type: 'bigArmor', chance: 0.05, amount: 50 }
 ];
 
 function createLootCrate(x, y, z, seed) {
@@ -4270,12 +4865,16 @@ function searchLootContainer(container) {
   // Give loot to player
   if (container.lootType === 'health' || container.lootType === 'bigHealth') {
     state.health = Math.min(100, state.health + container.lootAmount);
-    updateHealthBar();
-    showNotification(`+${container.lootAmount} Health`);
+    updateHealth();
+    showPickupMessage(`+${container.lootAmount} Health`, '#44ff44');
   } else if (container.lootType === 'ammo' || container.lootType === 'bigAmmo') {
-    state.ammo += container.lootAmount;
+    state.ammoReserve += container.lootAmount;
     updateAmmoDisplay();
-    showNotification(`+${container.lootAmount} Ammo`);
+    showPickupMessage(`+${container.lootAmount} Ammo`, '#ffaa00');
+  } else if (container.lootType === 'armor' || container.lootType === 'bigArmor') {
+    state.armor = Math.min(state.maxArmor, state.armor + container.lootAmount);
+    updateArmorBar();
+    showPickupMessage(`+${container.lootAmount} Armor`, '#3498db');
   }
 
   playSound('pickup');
@@ -5446,6 +6045,779 @@ function createBulletTrail(start, end) {
 // Raycaster for shooting
 const raycaster = new THREE.Raycaster();
 
+// Hit feedback functions (defined early to avoid hoisting issues)
+function showHitMarker(type = 'hit') {
+  const hitMarker = document.getElementById('hit-marker');
+  if (!hitMarker) return;
+
+  hitMarker.className = 'hit-marker ' + type;
+  hitMarker.classList.add('active');
+
+  setTimeout(() => {
+    hitMarker.classList.remove('active');
+  }, type === 'kill' ? 300 : 150);
+}
+
+function showDamageNumber(worldPosition, damage, isCritical = false) {
+  // Convert 3D world position to 2D screen position
+  const screenPos = worldPosition.clone().project(camera);
+
+  // Check if position is in front of camera
+  if (screenPos.z > 1) return;
+
+  const x = (screenPos.x * 0.5 + 0.5) * window.innerWidth;
+  const y = (-screenPos.y * 0.5 + 0.5) * window.innerHeight;
+
+  // Create damage number element
+  const damageEl = document.createElement('div');
+  damageEl.className = 'damage-number' + (isCritical ? ' critical' : '');
+  damageEl.textContent = Math.round(damage);
+
+  // Add random horizontal offset for variety
+  const offsetX = (Math.random() - 0.5) * 40;
+  damageEl.style.left = `${x + offsetX}px`;
+  damageEl.style.top = `${y}px`;
+
+  document.body.appendChild(damageEl);
+
+  // Remove after animation completes
+  setTimeout(() => {
+    damageEl.remove();
+  }, 1000);
+}
+
+// ==================== GRENADE SYSTEM ====================
+const GRENADE_CONFIG = {
+  throwForceMin: 15,
+  throwForceMax: 35,
+  maxHoldTime: 2000, // ms to reach max throw force
+  fuseTime: 3000, // ms before explosion
+  explosionRadius: 8,
+  maxDamage: 100,
+  minDamage: 20,
+  bounceDecay: 0.5,
+  gravity: -20,
+  trajectoryPoints: 30
+};
+
+function createGrenadeMesh() {
+  const grenadeGroup = new THREE.Group();
+
+  // Grenade body (oval shape)
+  const bodyGeometry = new THREE.SphereGeometry(0.15, 16, 12);
+  bodyGeometry.scale(1, 1.3, 1);
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color: 0x2d4a2d, // Olive green
+    roughness: 0.6,
+    metalness: 0.3
+  });
+  const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+  grenadeGroup.add(body);
+
+  // Grenade top cap
+  const capGeometry = new THREE.CylinderGeometry(0.08, 0.1, 0.08, 12);
+  const capMaterial = new THREE.MeshStandardMaterial({
+    color: 0x1a1a1a,
+    roughness: 0.4,
+    metalness: 0.6
+  });
+  const cap = new THREE.Mesh(capGeometry, capMaterial);
+  cap.position.y = 0.2;
+  grenadeGroup.add(cap);
+
+  // Safety lever
+  const leverGeometry = new THREE.BoxGeometry(0.03, 0.15, 0.06);
+  const leverMaterial = new THREE.MeshStandardMaterial({
+    color: 0x3a3a3a,
+    metalness: 0.7
+  });
+  const lever = new THREE.Mesh(leverGeometry, leverMaterial);
+  lever.position.set(0.1, 0.15, 0);
+  lever.rotation.z = 0.2;
+  grenadeGroup.add(lever);
+
+  return grenadeGroup;
+}
+
+function createTrajectoryLine() {
+  const geometry = new THREE.BufferGeometry();
+  const positions = new Float32Array(GRENADE_CONFIG.trajectoryPoints * 3);
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+  const material = new THREE.LineDashedMaterial({
+    color: 0xffff00,
+    dashSize: 0.3,
+    gapSize: 0.15,
+    transparent: true,
+    opacity: 0.7
+  });
+
+  const line = new THREE.Line(geometry, material);
+  line.computeLineDistances();
+  return line;
+}
+
+function calculateTrajectory(startPos, velocity, numPoints) {
+  const points = [];
+  const pos = startPos.clone();
+  const vel = velocity.clone();
+  const dt = 0.05; // Time step
+
+  for (let i = 0; i < numPoints; i++) {
+    points.push(pos.clone());
+
+    // Apply gravity
+    vel.y += GRENADE_CONFIG.gravity * dt;
+    pos.add(vel.clone().multiplyScalar(dt));
+
+    // Stop at ground level
+    if (pos.y < 0.15) {
+      pos.y = 0.15;
+      points.push(pos.clone());
+      break;
+    }
+  }
+
+  return points;
+}
+
+function updateTrajectoryPreview() {
+  if (!state.isHoldingGrenade || !state.grenadeTrajectoryLine) return;
+
+  const holdTime = Math.min(Date.now() - state.grenadeHoldStart, GRENADE_CONFIG.maxHoldTime);
+  const throwPower = GRENADE_CONFIG.throwForceMin +
+    (GRENADE_CONFIG.throwForceMax - GRENADE_CONFIG.throwForceMin) * (holdTime / GRENADE_CONFIG.maxHoldTime);
+
+  // Get throw direction from camera
+  const throwDir = new THREE.Vector3(0, 0.3, -1).normalize();
+  throwDir.applyQuaternion(camera.quaternion);
+
+  const velocity = throwDir.multiplyScalar(throwPower);
+  const startPos = camera.position.clone().add(new THREE.Vector3(0, -0.3, 0));
+
+  const points = calculateTrajectory(startPos, velocity, GRENADE_CONFIG.trajectoryPoints);
+
+  // Update line geometry
+  const positions = state.grenadeTrajectoryLine.geometry.attributes.position.array;
+  for (let i = 0; i < GRENADE_CONFIG.trajectoryPoints; i++) {
+    if (i < points.length) {
+      positions[i * 3] = points[i].x;
+      positions[i * 3 + 1] = points[i].y;
+      positions[i * 3 + 2] = points[i].z;
+    } else {
+      // Fill remaining with last point
+      const lastPoint = points[points.length - 1];
+      positions[i * 3] = lastPoint.x;
+      positions[i * 3 + 1] = lastPoint.y;
+      positions[i * 3 + 2] = lastPoint.z;
+    }
+  }
+
+  state.grenadeTrajectoryLine.geometry.attributes.position.needsUpdate = true;
+  state.grenadeTrajectoryLine.computeLineDistances();
+}
+
+function startGrenadeThrow() {
+  if (state.grenadeCount <= 0 || state.isHoldingGrenade || state.isDead || state.inVehicle) return;
+
+  state.isHoldingGrenade = true;
+  state.grenadeHoldStart = Date.now();
+
+  // Create trajectory preview line
+  state.grenadeTrajectoryLine = createTrajectoryLine();
+  scene.add(state.grenadeTrajectoryLine);
+
+  // Update grenade UI to show "cooking"
+  updateGrenadeUI();
+}
+
+function releaseGrenade() {
+  if (!state.isHoldingGrenade) return;
+
+  const holdTime = Math.min(Date.now() - state.grenadeHoldStart, GRENADE_CONFIG.maxHoldTime);
+  const throwPower = GRENADE_CONFIG.throwForceMin +
+    (GRENADE_CONFIG.throwForceMax - GRENADE_CONFIG.throwForceMin) * (holdTime / GRENADE_CONFIG.maxHoldTime);
+
+  // Remove trajectory line
+  if (state.grenadeTrajectoryLine) {
+    scene.remove(state.grenadeTrajectoryLine);
+    state.grenadeTrajectoryLine.geometry.dispose();
+    state.grenadeTrajectoryLine.material.dispose();
+    state.grenadeTrajectoryLine = null;
+  }
+
+  // Get throw direction from camera
+  const throwDir = new THREE.Vector3(0, 0.3, -1).normalize();
+  throwDir.applyQuaternion(camera.quaternion);
+
+  const velocity = throwDir.multiplyScalar(throwPower);
+  const startPos = camera.position.clone().add(new THREE.Vector3(0, -0.3, 0));
+
+  // Create and throw grenade
+  throwGrenade(startPos, velocity);
+
+  state.grenadeCount--;
+  state.isHoldingGrenade = false;
+  updateGrenadeUI();
+
+  // Emit grenade throw to server
+  if (socket) {
+    socket.emit('grenadeThrow', {
+      position: { x: startPos.x, y: startPos.y, z: startPos.z },
+      velocity: { x: velocity.x, y: velocity.y, z: velocity.z }
+    });
+  }
+}
+
+function throwGrenade(position, velocity) {
+  const grenade = createGrenadeMesh();
+  grenade.position.copy(position);
+  scene.add(grenade);
+
+  const grenadeData = {
+    mesh: grenade,
+    velocity: velocity.clone(),
+    position: position.clone(),
+    fuseTimer: GRENADE_CONFIG.fuseTime,
+    bounces: 0
+  };
+
+  state.activeGrenades.push(grenadeData);
+}
+
+function updateGrenades(delta) {
+  const toRemove = [];
+
+  for (let i = 0; i < state.activeGrenades.length; i++) {
+    const grenade = state.activeGrenades[i];
+
+    // Update fuse timer
+    grenade.fuseTimer -= delta * 1000;
+
+    if (grenade.fuseTimer <= 0) {
+      // Explode!
+      createExplosion(grenade.position);
+      applyExplosionDamage(grenade.position);
+      scene.remove(grenade.mesh);
+      toRemove.push(i);
+      continue;
+    }
+
+    // Apply gravity
+    grenade.velocity.y += GRENADE_CONFIG.gravity * delta;
+
+    // Update position
+    const movement = grenade.velocity.clone().multiplyScalar(delta);
+    grenade.position.add(movement);
+
+    // Ground collision
+    if (grenade.position.y < 0.15) {
+      grenade.position.y = 0.15;
+      grenade.velocity.y = -grenade.velocity.y * GRENADE_CONFIG.bounceDecay;
+      grenade.velocity.x *= 0.8;
+      grenade.velocity.z *= 0.8;
+      grenade.bounces++;
+
+      // Stop bouncing if velocity is low
+      if (Math.abs(grenade.velocity.y) < 1) {
+        grenade.velocity.y = 0;
+      }
+    }
+
+    // Wall collision check (simple)
+    const wallCheck = new THREE.Raycaster(
+      grenade.position.clone(),
+      grenade.velocity.clone().normalize(),
+      0,
+      grenade.velocity.length() * delta * 2
+    );
+    const wallHits = wallCheck.intersectObjects(collidableObjects, true);
+    if (wallHits.length > 0 && wallHits[0].distance < 0.3) {
+      // Reflect velocity
+      const normal = wallHits[0].face ? wallHits[0].face.normal : new THREE.Vector3(0, 1, 0);
+      grenade.velocity.reflect(normal).multiplyScalar(GRENADE_CONFIG.bounceDecay);
+      grenade.bounces++;
+    }
+
+    // Update mesh position and rotation
+    grenade.mesh.position.copy(grenade.position);
+    grenade.mesh.rotation.x += delta * 5;
+    grenade.mesh.rotation.z += delta * 3;
+
+    // Flash red when about to explode
+    if (grenade.fuseTimer < 500) {
+      const flash = Math.sin(Date.now() * 0.03) > 0;
+      grenade.mesh.children[0].material.emissive.setHex(flash ? 0xff0000 : 0x000000);
+    }
+  }
+
+  // Remove exploded grenades (reverse order to maintain indices)
+  for (let i = toRemove.length - 1; i >= 0; i--) {
+    state.activeGrenades.splice(toRemove[i], 1);
+  }
+}
+
+function createExplosion(position) {
+  // Create explosion flash
+  const flashGeometry = new THREE.SphereGeometry(GRENADE_CONFIG.explosionRadius * 0.3, 16, 16);
+  const flashMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffff00,
+    transparent: true,
+    opacity: 1
+  });
+  const flash = new THREE.Mesh(flashGeometry, flashMaterial);
+  flash.position.copy(position);
+  scene.add(flash);
+
+  // Create expanding shockwave ring
+  const ringGeometry = new THREE.RingGeometry(0.5, 1, 32);
+  const ringMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff6600,
+    transparent: true,
+    opacity: 0.8,
+    side: THREE.DoubleSide
+  });
+  const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+  ring.position.copy(position);
+  ring.position.y = 0.1;
+  ring.rotation.x = -Math.PI / 2;
+  scene.add(ring);
+
+  // Create smoke particles
+  const smokeParticles = [];
+  for (let i = 0; i < 15; i++) {
+    const smokeGeometry = new THREE.SphereGeometry(0.3 + Math.random() * 0.4, 8, 8);
+    const smokeMaterial = new THREE.MeshBasicMaterial({
+      color: 0x333333,
+      transparent: true,
+      opacity: 0.7
+    });
+    const smoke = new THREE.Mesh(smokeGeometry, smokeMaterial);
+    smoke.position.copy(position);
+    smoke.position.x += (Math.random() - 0.5) * 2;
+    smoke.position.z += (Math.random() - 0.5) * 2;
+    smoke.userData.velocity = new THREE.Vector3(
+      (Math.random() - 0.5) * 3,
+      2 + Math.random() * 3,
+      (Math.random() - 0.5) * 3
+    );
+    scene.add(smoke);
+    smokeParticles.push(smoke);
+  }
+
+  // Create debris particles
+  const debrisParticles = [];
+  for (let i = 0; i < 20; i++) {
+    const debrisGeometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+    const debrisMaterial = new THREE.MeshBasicMaterial({
+      color: Math.random() > 0.5 ? 0x8b4513 : 0x444444
+    });
+    const debris = new THREE.Mesh(debrisGeometry, debrisMaterial);
+    debris.position.copy(position);
+    debris.userData.velocity = new THREE.Vector3(
+      (Math.random() - 0.5) * 15,
+      5 + Math.random() * 10,
+      (Math.random() - 0.5) * 15
+    );
+    scene.add(debris);
+    debrisParticles.push(debris);
+  }
+
+  // Animate explosion
+  let elapsed = 0;
+  const explosionDuration = 1000;
+  const animateExplosion = () => {
+    elapsed += 16;
+    const progress = elapsed / explosionDuration;
+
+    if (progress >= 1) {
+      scene.remove(flash);
+      scene.remove(ring);
+      smokeParticles.forEach(p => scene.remove(p));
+      debrisParticles.forEach(p => scene.remove(p));
+      flash.geometry.dispose();
+      flash.material.dispose();
+      ring.geometry.dispose();
+      ring.material.dispose();
+      return;
+    }
+
+    // Flash shrinks and fades
+    flash.scale.setScalar(1 + progress * 3);
+    flashMaterial.opacity = 1 - progress;
+
+    // Ring expands
+    ring.scale.setScalar(1 + progress * GRENADE_CONFIG.explosionRadius);
+    ringMaterial.opacity = 0.8 * (1 - progress);
+
+    // Update smoke particles
+    smokeParticles.forEach(smoke => {
+      smoke.position.add(smoke.userData.velocity.clone().multiplyScalar(0.016));
+      smoke.userData.velocity.y -= 0.05;
+      smoke.material.opacity = 0.7 * (1 - progress);
+      smoke.scale.setScalar(1 + progress);
+    });
+
+    // Update debris particles
+    debrisParticles.forEach(debris => {
+      debris.position.add(debris.userData.velocity.clone().multiplyScalar(0.016));
+      debris.userData.velocity.y -= 0.5;
+      if (debris.position.y < 0) debris.position.y = 0;
+      debris.rotation.x += 0.2;
+      debris.rotation.z += 0.1;
+    });
+
+    requestAnimationFrame(animateExplosion);
+  };
+  animateExplosion();
+
+  // Screen shake if player is close
+  const distToPlayer = position.distanceTo(camera.position);
+  if (distToPlayer < GRENADE_CONFIG.explosionRadius * 2) {
+    const shakeIntensity = 1 - (distToPlayer / (GRENADE_CONFIG.explosionRadius * 2));
+    triggerExplosionShake(shakeIntensity * 0.3, 300);
+  }
+
+  // Play explosion sound
+  playSound('explosion');
+}
+
+function triggerExplosionShake(intensity, duration) {
+  const startTime = Date.now();
+  const originalPos = camera.position.clone();
+
+  const shake = () => {
+    const elapsed = Date.now() - startTime;
+    if (elapsed >= duration) {
+      return;
+    }
+
+    const remaining = 1 - elapsed / duration;
+    const shakeAmount = intensity * remaining;
+
+    camera.position.x = originalPos.x + (Math.random() - 0.5) * shakeAmount;
+    camera.position.y = originalPos.y + (Math.random() - 0.5) * shakeAmount;
+    camera.position.z = originalPos.z + (Math.random() - 0.5) * shakeAmount;
+
+    requestAnimationFrame(shake);
+  };
+  shake();
+}
+
+function applyExplosionDamage(position) {
+  const playerDist = position.distanceTo(camera.position);
+
+  // Damage player
+  if (playerDist < GRENADE_CONFIG.explosionRadius && !state.isDead) {
+    const damagePercent = 1 - (playerDist / GRENADE_CONFIG.explosionRadius);
+    const damage = GRENADE_CONFIG.minDamage +
+      (GRENADE_CONFIG.maxDamage - GRENADE_CONFIG.minDamage) * damagePercent;
+
+    applyDamage(Math.round(damage));
+
+    // Show damage direction indicator
+    showHitDirection(position);
+  }
+
+  // Damage enemies (emit to server)
+  if (socket) {
+    socket.emit('grenadeExplosion', {
+      position: { x: position.x, y: position.y, z: position.z },
+      radius: GRENADE_CONFIG.explosionRadius,
+      maxDamage: GRENADE_CONFIG.maxDamage,
+      minDamage: GRENADE_CONFIG.minDamage
+    });
+  }
+}
+
+function showHitDirection(fromPosition) {
+  const directionIndicator = document.getElementById('hit-direction');
+  if (!directionIndicator) return;
+
+  // Calculate angle from player to damage source
+  const toSource = new THREE.Vector3();
+  toSource.subVectors(fromPosition, camera.position);
+  toSource.y = 0;
+  toSource.normalize();
+
+  const forward = new THREE.Vector3(0, 0, -1);
+  forward.applyQuaternion(camera.quaternion);
+  forward.y = 0;
+  forward.normalize();
+
+  const angle = Math.atan2(
+    toSource.x * forward.z - toSource.z * forward.x,
+    toSource.x * forward.x + toSource.z * forward.z
+  );
+
+  directionIndicator.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
+  directionIndicator.classList.add('active');
+
+  setTimeout(() => {
+    directionIndicator.classList.remove('active');
+  }, 500);
+}
+
+function updateGrenadeUI() {
+  const grenadeCounter = document.getElementById('grenade-counter');
+  const grenadeDisplay = document.getElementById('grenade-display');
+  if (grenadeCounter) {
+    grenadeCounter.textContent = state.grenadeCount;
+    if (state.isHoldingGrenade) {
+      grenadeCounter.classList.add('cooking');
+      if (grenadeDisplay) grenadeDisplay.classList.add('cooking');
+    } else {
+      grenadeCounter.classList.remove('cooking');
+      if (grenadeDisplay) grenadeDisplay.classList.remove('cooking');
+    }
+  }
+}
+
+function addGrenade(count = 1) {
+  state.grenadeCount = Math.min(state.grenadeCount + count, state.maxGrenades);
+  updateGrenadeUI();
+}
+
+// ==================== MELEE SYSTEM ====================
+const MELEE_CONFIG = {
+  damage: 75,
+  backstabDamage: 150, // Instant kill on most enemies
+  range: 2.5,
+  cooldown: 500, // ms between attacks
+  animationDuration: 300,
+  lungeDistance: 0.5
+};
+
+let knifeMesh = null;
+
+function createKnifeMesh() {
+  const knifeGroup = new THREE.Group();
+
+  // Blade
+  const bladeShape = new THREE.Shape();
+  bladeShape.moveTo(0, 0);
+  bladeShape.lineTo(0.03, 0);
+  bladeShape.lineTo(0.02, 0.25);
+  bladeShape.lineTo(0, 0.3);
+  bladeShape.lineTo(-0.01, 0.25);
+  bladeShape.lineTo(0, 0);
+
+  const bladeGeometry = new THREE.ExtrudeGeometry(bladeShape, {
+    depth: 0.01,
+    bevelEnabled: false
+  });
+  const bladeMaterial = new THREE.MeshStandardMaterial({
+    color: 0xcccccc,
+    metalness: 0.9,
+    roughness: 0.2
+  });
+  const blade = new THREE.Mesh(bladeGeometry, bladeMaterial);
+  blade.rotation.x = Math.PI / 2;
+  blade.position.z = -0.005;
+  knifeGroup.add(blade);
+
+  // Handle
+  const handleGeometry = new THREE.CylinderGeometry(0.02, 0.025, 0.12, 8);
+  const handleMaterial = new THREE.MeshStandardMaterial({
+    color: 0x2a1a0a,
+    roughness: 0.8
+  });
+  const handle = new THREE.Mesh(handleGeometry, handleMaterial);
+  handle.position.y = -0.06;
+  knifeGroup.add(handle);
+
+  // Guard
+  const guardGeometry = new THREE.BoxGeometry(0.08, 0.015, 0.02);
+  const guardMaterial = new THREE.MeshStandardMaterial({
+    color: 0x444444,
+    metalness: 0.7
+  });
+  const guard = new THREE.Mesh(guardGeometry, guardMaterial);
+  guard.position.y = 0;
+  knifeGroup.add(guard);
+
+  knifeGroup.visible = false;
+  return knifeGroup;
+}
+
+function initKnife() {
+  knifeMesh = createKnifeMesh();
+  knifeMesh.position.set(0.3, -0.2, -0.4);
+  knifeMesh.rotation.set(0, 0, -Math.PI / 4);
+  camera.add(knifeMesh);
+}
+
+function meleeAttack() {
+  if (!state.canMelee || state.isMeleeing || state.isDead || state.inVehicle || state.isReloading) return;
+
+  state.canMelee = false;
+  state.isMeleeing = true;
+  state.meleeAnimationTime = 0;
+
+  // Hide weapon, show knife
+  weaponGroup.visible = false;
+  if (knifeMesh) knifeMesh.visible = true;
+
+  // Play slash sound
+  playSound('melee');
+
+  // Perform hit detection
+  const meleeDirection = new THREE.Vector3(0, 0, -1);
+  meleeDirection.applyQuaternion(camera.quaternion);
+
+  // Small lunge forward
+  const lungeVector = meleeDirection.clone().multiplyScalar(MELEE_CONFIG.lungeDistance * 0.3);
+  camera.position.add(lungeVector);
+
+  // Check for enemy hits
+  checkMeleeHits(meleeDirection);
+
+  // Animate the slash
+  animateMeleeSlash();
+
+  // Reset after cooldown
+  setTimeout(() => {
+    state.canMelee = true;
+  }, MELEE_CONFIG.cooldown);
+}
+
+function animateMeleeSlash() {
+  const startTime = Date.now();
+  const duration = MELEE_CONFIG.animationDuration;
+
+  const animate = () => {
+    const elapsed = Date.now() - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+
+    if (knifeMesh) {
+      // Slash arc animation
+      if (progress < 0.5) {
+        // Wind up and slash
+        const slashProgress = progress * 2;
+        knifeMesh.rotation.z = -Math.PI / 4 + slashProgress * Math.PI / 2;
+        knifeMesh.position.x = 0.3 - slashProgress * 0.4;
+        knifeMesh.position.z = -0.4 + slashProgress * 0.2;
+      } else {
+        // Return
+        const returnProgress = (progress - 0.5) * 2;
+        knifeMesh.rotation.z = Math.PI / 4 - returnProgress * Math.PI / 2;
+        knifeMesh.position.x = -0.1 + returnProgress * 0.4;
+        knifeMesh.position.z = -0.2 - returnProgress * 0.2;
+      }
+    }
+
+    if (progress < 1) {
+      requestAnimationFrame(animate);
+    } else {
+      // Animation complete
+      state.isMeleeing = false;
+      if (knifeMesh) {
+        knifeMesh.visible = false;
+        knifeMesh.rotation.z = -Math.PI / 4;
+        knifeMesh.position.set(0.3, -0.2, -0.4);
+      }
+      weaponGroup.visible = true;
+    }
+  };
+
+  animate();
+}
+
+function checkMeleeHits(direction) {
+  // Get player forward direction for backstab check
+  const playerForward = new THREE.Vector3(0, 0, -1);
+  playerForward.applyQuaternion(camera.quaternion);
+  playerForward.y = 0;
+  playerForward.normalize();
+
+  let hitSomething = false;
+
+  // Check enemies
+  for (const enemyId in state.enemies) {
+    const enemyData = state.enemies[enemyId];
+    if (!enemyData.mesh) continue;
+
+    const enemyPos = enemyData.mesh.position;
+    const toEnemy = new THREE.Vector3().subVectors(enemyPos, camera.position);
+    const distance = toEnemy.length();
+
+    if (distance > MELEE_CONFIG.range) continue;
+
+    // Check if enemy is in front of player (within ~90 degree cone)
+    toEnemy.normalize();
+    const dot = playerForward.dot(toEnemy);
+
+    if (dot > 0.3) { // Enemy is roughly in front
+      // Check if attacking from behind (backstab)
+      // Enemy facing direction would be needed, but for now we use angle
+      const isBackstab = dot > 0.8 && distance < 1.5;
+
+      const damage = isBackstab ? MELEE_CONFIG.backstabDamage : MELEE_CONFIG.damage;
+
+      // Emit hit to server
+      if (socket) {
+        socket.emit('meleeHitEnemy', {
+          enemyId: enemyId,
+          damage: damage,
+          isBackstab: isBackstab
+        });
+      }
+
+      // Show hit effects
+      createHitEffect(enemyPos.clone());
+      showHitMarker(isBackstab ? 'kill' : 'hit');
+      if (isBackstab) {
+        showDamageNumber(enemyPos.clone(), damage, true);
+      } else {
+        showDamageNumber(enemyPos.clone(), damage, false);
+      }
+
+      hitSomething = true;
+      break; // Only hit one enemy per swing
+    }
+  }
+
+  // Check other players (PvP)
+  for (const playerId in state.players) {
+    if (playerId === socket.id) continue;
+
+    const playerData = state.players[playerId];
+    if (!playerData.mesh) continue;
+
+    const otherPos = playerData.mesh.position;
+    const toOther = new THREE.Vector3().subVectors(otherPos, camera.position);
+    const distance = toOther.length();
+
+    if (distance > MELEE_CONFIG.range) continue;
+
+    toOther.normalize();
+    const dot = playerForward.dot(toOther);
+
+    if (dot > 0.3) {
+      const isBackstab = dot > 0.8 && distance < 1.5;
+      const damage = isBackstab ? MELEE_CONFIG.backstabDamage : MELEE_CONFIG.damage;
+
+      if (socket) {
+        socket.emit('meleeHit', {
+          targetId: playerId,
+          damage: damage,
+          isBackstab: isBackstab
+        });
+      }
+
+      createHitEffect(otherPos.clone());
+      showHitMarker(isBackstab ? 'kill' : 'hit');
+      hitSomething = true;
+      break;
+    }
+  }
+
+  // Screen shake on hit
+  if (hitSomething) {
+    triggerScreenShake(0.15);
+  }
+}
+
 function shoot() {
   const weapon = getEffectiveWeaponStats(state.currentWeapon);
 
@@ -5688,9 +7060,59 @@ const difficultyDisplay = document.getElementById('difficulty-display');
 const resumeBtn = document.getElementById('resume-btn');
 const quitBtn = document.getElementById('quit-btn');
 
+// Forward declaration for game mode HUD (defined later in file)
+function updateGameModeHUD() {
+  const gamemodeHud = document.getElementById('gamemode-hud');
+  const dmHud = document.getElementById('dm-hud');
+  const kothHud = document.getElementById('koth-hud');
+  const ctfHud = document.getElementById('ctf-hud');
+  const waveHud = document.getElementById('wave-hud');
+  const brHud = document.getElementById('br-hud');
+
+  // Hide all mode HUDs
+  if (dmHud) dmHud.classList.add('hidden');
+  if (kothHud) kothHud.classList.add('hidden');
+  if (ctfHud) ctfHud.classList.add('hidden');
+  if (waveHud) waveHud.classList.add('hidden');
+  if (brHud) brHud.classList.add('hidden');
+
+  if (state.gameMode === 'freeplay') {
+    if (gamemodeHud) gamemodeHud.classList.add('hidden');
+    return;
+  }
+
+  if (gamemodeHud) gamemodeHud.classList.remove('hidden');
+
+  switch (state.gameMode) {
+    case 'deathmatch':
+      if (dmHud) dmHud.classList.remove('hidden');
+      break;
+    case 'koth':
+      if (kothHud) kothHud.classList.remove('hidden');
+      break;
+    case 'ctf':
+      if (ctfHud) ctfHud.classList.remove('hidden');
+      break;
+    case 'wave':
+      if (waveHud) waveHud.classList.remove('hidden');
+      break;
+    case 'battleroyale':
+      if (brHud) brHud.classList.remove('hidden');
+      break;
+  }
+
+  // Update 3D game mode objects (if function exists)
+  if (typeof updateGameMode3D === 'function') updateGameMode3D();
+}
+
 // Start game with selected difficulty
 async function startGame(difficulty) {
   initAudio(); // Initialize audio on first user interaction
+
+  // Initialize knife mesh for melee (only once)
+  if (!knifeMesh) {
+    initKnife();
+  }
 
   // Load saved XP progress
   loadXPProgress();
@@ -5728,11 +7150,18 @@ async function startGame(difficulty) {
     state.isPlaying = true;
     state.isPaused = false;
     state.health = 100;
+    state.armor = 0;
+    updateArmorBar();
 
     // Reset weapons inventory
     state.weapons = { pistol: true, rifle: false, shotgun: false, sniper: false };
     state.currentWeapon = 'pistol';
+
+    // Apply shop bonuses (loadouts, consumables, upgrades)
+    applyShopBonuses();
     updateWeaponSlots();
+    updateArmorBar();
+    updateHealth();
 
     // Reset game timer
     gameStartTime = Date.now();
@@ -5934,8 +7363,14 @@ function respawn() {
   state.isDead = false;
   state.deathAnimationPhase = 0;
 
-  // Reset health
+  // Reset health and armor
   state.health = 100;
+  state.armor = 0;
+  updateArmorBar();
+
+  // Reset grenades
+  state.grenadeCount = 3;
+  updateGrenadeUI();
 
   // Reset camera rotation - use euler to properly reset quaternion
   euler.set(0, camera.rotation.y, 0, 'YXZ'); // Keep yaw (facing direction), reset pitch and roll
@@ -6416,6 +7851,8 @@ document.addEventListener('keydown', (event) => {
     case 'Digit3': switchWeapon('shotgun'); break;
     case 'Digit4': switchWeapon('sniper'); break;
     case 'KeyQ': quickSwapWeapon(); break;
+    case 'KeyG': startGrenadeThrow(); break;
+    case 'KeyV': meleeAttack(); break;
   }
 });
 
@@ -6431,6 +7868,7 @@ document.addEventListener('keyup', (event) => {
     case 'KeyA': state.moveLeft = false; break;
     case 'KeyD': state.moveRight = false; break;
     case 'ShiftLeft': state.isSprinting = false; break;
+    case 'KeyG': releaseGrenade(); break;
   }
 });
 
@@ -6578,6 +8016,7 @@ socket.on('playerDeath', (data) => {
     state.killStreak++;
     checkKillStreakRewards();
     showHitMarker('kill');
+    addKillPoints(SHOP_CONFIG.rewards.playerKill, 'Player Kill');
   }
 
   // Update stats for other players
@@ -7030,12 +8469,28 @@ socket.on('playerShoot', (data) => {
   createBulletTrail(start, end);
 });
 
+// Apply damage with armor absorption
+function applyDamage(damage) {
+  // Armor absorbs damage first (at 50% efficiency - armor takes 2 damage per 1 blocked)
+  if (state.armor > 0) {
+    const armorAbsorb = Math.min(state.armor, damage);
+    state.armor -= armorAbsorb;
+    damage -= armorAbsorb * 0.5; // Armor blocks 50% of absorbed damage
+    updateArmorBar();
+  }
+
+  // Remaining damage goes to health
+  if (damage > 0) {
+    state.health -= damage;
+    if (state.health < 0) state.health = 0;
+  }
+  updateHealth();
+}
+
 socket.on('playerHit', (data) => {
   if (!state.isPlaying || state.isPaused || state.isDead) return; // Ignore damage while on menu, paused, or dead
   if (data.targetId === socket.id) {
-    state.health -= data.damage;
-    if (state.health < 0) state.health = 0;
-    updateHealth();
+    applyDamage(data.damage);
     playSound('hit');
     triggerScreenShake(0.5);
 
@@ -7067,9 +8522,7 @@ socket.on('enemyAttack', (data) => {
     const diffSettings = DIFFICULTY_SETTINGS[state.difficulty];
     const actualDamage = Math.round(data.damage * diffSettings.damageMultiplier);
 
-    state.health -= actualDamage;
-    if (state.health < 0) state.health = 0;
-    updateHealth();
+    applyDamage(actualDamage);
     playSound('hit');
     triggerScreenShake(0.6);
 
@@ -7163,6 +8616,7 @@ socket.on('enemyDeath', (data) => {
     checkKillStreakRewards();
     // Track weapon kill for attachments
     trackWeaponKill(state.currentWeapon);
+    addKillPoints(SHOP_CONFIG.rewards.enemyKill, 'Enemy Kill');
   }
 
   // Create death effect
@@ -7174,6 +8628,13 @@ socket.on('enemyDeath', (data) => {
 
 socket.on('enemyRespawn', (data) => {
   console.log(`Enemy ${data.enemyId} respawned`);
+});
+
+// Handle other players' grenade throws
+socket.on('playerGrenadeThrow', (data) => {
+  const position = new THREE.Vector3(data.position.x, data.position.y, data.position.z);
+  const velocity = new THREE.Vector3(data.velocity.x, data.velocity.y, data.velocity.z);
+  throwGrenade(position, velocity);
 });
 
 // ==================== BOSS EVENT HANDLERS ====================
@@ -7250,6 +8711,7 @@ socket.on('bossDeath', (data) => {
   // Track kill
   if (data.killerId === socket.id) {
     state.kills++;
+    addKillPoints(SHOP_CONFIG.rewards.bossKill, 'Boss Kill');
 
     // Award loot to the player who killed the boss
     if (data.loot) {
@@ -7516,52 +8978,6 @@ socket.on('brUpdate', (data) => {
 socket.on('brShrink', (data) => {
   showPickupMessage(`Circle shrinking! Phase ${data.phase}`, '#3498db');
 });
-
-// ==================== GAME MODE HUD FUNCTIONS ====================
-
-function updateGameModeHUD() {
-  const gamemodeHud = document.getElementById('gamemode-hud');
-  const dmHud = document.getElementById('dm-hud');
-  const kothHud = document.getElementById('koth-hud');
-  const ctfHud = document.getElementById('ctf-hud');
-  const waveHud = document.getElementById('wave-hud');
-  const brHud = document.getElementById('br-hud');
-
-  // Hide all mode HUDs
-  dmHud.classList.add('hidden');
-  kothHud.classList.add('hidden');
-  ctfHud.classList.add('hidden');
-  waveHud.classList.add('hidden');
-  brHud.classList.add('hidden');
-
-  if (state.gameMode === 'freeplay') {
-    gamemodeHud.classList.add('hidden');
-    return;
-  }
-
-  gamemodeHud.classList.remove('hidden');
-
-  switch (state.gameMode) {
-    case 'deathmatch':
-      dmHud.classList.remove('hidden');
-      break;
-    case 'koth':
-      kothHud.classList.remove('hidden');
-      break;
-    case 'ctf':
-      ctfHud.classList.remove('hidden');
-      break;
-    case 'wave':
-      waveHud.classList.remove('hidden');
-      break;
-    case 'battleroyale':
-      brHud.classList.remove('hidden');
-      break;
-  }
-
-  // Update 3D game mode objects
-  updateGameMode3D();
-}
 
 // ==================== GAME MODE 3D RENDERING ====================
 
@@ -8363,6 +9779,12 @@ function updateHealth() {
   }
 }
 
+function updateArmorBar() {
+  const armorPercent = (state.armor / state.maxArmor) * 100;
+  document.getElementById('armor-fill').style.width = `${armorPercent}%`;
+  document.getElementById('armor-text').textContent = `Armor: ${state.armor}`;
+}
+
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
@@ -8568,6 +9990,10 @@ function animate() {
 
   portal.rotation.z += delta * 0.5;
   portalInner.rotation.z -= delta * 0.3;
+
+  // Update grenades
+  updateGrenades(delta);
+  updateTrajectoryPreview();
 
   // Update day/night cycle
   updateDayNightCycle(delta);

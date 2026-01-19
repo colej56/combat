@@ -48,6 +48,8 @@ Combat is a browser-based 3D multiplayer first-person shooter with client-server
 - **Space** - Jump
 - **Left Click** - Shoot
 - **R** - Reload
+- **G** - Throw grenade (hold to increase distance, release to throw)
+- **V** - Melee knife attack (bonus damage from behind)
 - **1/2/3/4** - Switch weapons (Pistol/Rifle/Shotgun/Sniper)
 - **E** - Enter/exit vehicles, search loot crates
 - **F** - Toggle flashlight
