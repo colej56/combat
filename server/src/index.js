@@ -621,7 +621,8 @@ function hasLineOfSight(x1, z1, x2, z2) {
 }
 
 // Enemy configuration for infinite map
-const MAX_ENEMIES = 15;
+const MAX_ENEMIES = 8;
+const SQUAD_RADIUS = 15; // Enemies stay within this radius of their squad center
 const SPAWN_DISTANCE_MIN = 40;
 const SPAWN_DISTANCE_MAX = 80;
 const DESPAWN_DISTANCE = 150;
@@ -721,15 +722,32 @@ function spawnEnemiesNearPlayers() {
   const playerList = Object.values(players);
   if (playerList.length === 0) return;
 
-  // Count alive enemies
-  const aliveEnemies = Object.values(enemies).filter(e => e.health > 0).length;
+  // Count alive non-boss enemies
+  const aliveEnemies = Object.values(enemies).filter(e => e.health > 0 && !e.isBoss).length;
 
-  // Spawn more enemies if below max
-  while (aliveEnemies + Object.keys(enemies).length < MAX_ENEMIES && Object.keys(enemies).length < MAX_ENEMIES) {
-    const types = ['soldier', 'soldier', 'scout', 'heavy', 'bandit', 'bandit', 'wildlife'];
-    const type = types[Math.floor(Math.random() * types.length)];
+  // Spawn a new squad if below max enemies
+  if (aliveEnemies < MAX_ENEMIES) {
     const pos = getRandomSpawnNearPlayers();
-    spawnEnemy(type, pos.x, pos.z);
+    const squadId = createSquad(pos.x, pos.z);
+
+    // Spawn 3-4 enemies in the squad
+    const squadSize = 3 + Math.floor(Math.random() * 2);
+    const types = ['soldier', 'soldier', 'scout', 'heavy', 'bandit'];
+
+    for (let i = 0; i < squadSize && aliveEnemies + i < MAX_ENEMIES; i++) {
+      const angle = (i / squadSize) * Math.PI * 2;
+      const distance = 3 + Math.random() * 5;
+      const x = pos.x + Math.cos(angle) * distance;
+      const z = pos.z + Math.sin(angle) * distance;
+
+      const type = types[Math.floor(Math.random() * types.length)];
+      const enemyId = spawnEnemy(type, x, z);
+
+      if (enemyId && enemies[enemyId]) {
+        enemies[enemyId].squadId = squadId;
+        squads[squadId].members.push(enemyId);
+      }
+    }
   }
 }
 
@@ -749,22 +767,54 @@ function despawnFarEnemies() {
 
     // Despawn if too far from all players
     if (closestDist > DESPAWN_DISTANCE) {
+      // Remove from squad
+      if (enemy.squadId && squads[enemy.squadId]) {
+        const squad = squads[enemy.squadId];
+        squad.members = squad.members.filter(m => m !== id);
+        // Delete empty squads
+        if (squad.members.length === 0) {
+          delete squads[enemy.squadId];
+        }
+      }
       delete enemies[id];
     }
   }
 }
 
-function initializeEnemies() {
-  // Initial spawn around origin
-  for (let i = 0; i < 10; i++) {
-    const angle = (i / 10) * Math.PI * 2;
-    const distance = 30 + Math.random() * 30;
-    const x = Math.cos(angle) * distance;
-    const z = Math.sin(angle) * distance;
+// Squad system - enemies belong to squads and stay together
+const squads = {};
+let squadIdCounter = 0;
 
-    const types = ['soldier', 'soldier', 'scout', 'heavy', 'bandit', 'bandit', 'wildlife'];
+function createSquad(centerX, centerZ) {
+  const squadId = `squad_${squadIdCounter++}`;
+  squads[squadId] = {
+    id: squadId,
+    centerX: centerX,
+    centerZ: centerZ,
+    members: []
+  };
+  return squadId;
+}
+
+function initializeEnemies() {
+  // Create one squad near origin with 5 enemies
+  const squadId = createSquad(40, 40);
+
+  for (let i = 0; i < 5; i++) {
+    const angle = (i / 5) * Math.PI * 2;
+    const distance = 5 + Math.random() * 10; // Spawn close together
+    const x = 40 + Math.cos(angle) * distance;
+    const z = 40 + Math.sin(angle) * distance;
+
+    const types = ['soldier', 'soldier', 'scout', 'heavy', 'bandit'];
     const type = types[i % types.length];
-    spawnEnemy(type, x, z);
+    const enemyId = spawnEnemy(type, x, z);
+
+    // Assign to squad
+    if (enemyId && enemies[enemyId]) {
+      enemies[enemyId].squadId = squadId;
+      squads[squadId].members.push(enemyId);
+    }
   }
 
   // Spawn bosses at their fixed locations
@@ -829,15 +879,35 @@ function updateEnemyAI(delta) {
     // Execute behavior based on state
     switch (enemy.state) {
       case 'patrol':
+        // Get squad center (or use spawn point if no squad)
+        let patrolCenterX = enemy.spawnPoint.x;
+        let patrolCenterZ = enemy.spawnPoint.z;
+        if (enemy.squadId && squads[enemy.squadId]) {
+          patrolCenterX = squads[enemy.squadId].centerX;
+          patrolCenterZ = squads[enemy.squadId].centerZ;
+        }
+
         // Move toward patrol target
         const patrolDist = getDistance(enemy, enemy.patrolTarget);
         if (patrolDist < 2) {
-          // Pick new patrol target near spawn
+          // Pick new patrol target near squad center (tight radius)
           enemy.patrolTarget = {
-            x: enemy.spawnPoint.x + (Math.random() - 0.5) * 40,
-            z: enemy.spawnPoint.z + (Math.random() - 0.5) * 40
+            x: patrolCenterX + (Math.random() - 0.5) * SQUAD_RADIUS * 2,
+            z: patrolCenterZ + (Math.random() - 0.5) * SQUAD_RADIUS * 2
           };
         } else {
+          // Check if too far from squad center - return to group
+          const distFromCenter = Math.sqrt(
+            Math.pow(enemy.x - patrolCenterX, 2) + Math.pow(enemy.z - patrolCenterZ, 2)
+          );
+          if (distFromCenter > SQUAD_RADIUS * 2) {
+            // Too far, move back toward squad center
+            enemy.patrolTarget = {
+              x: patrolCenterX + (Math.random() - 0.5) * SQUAD_RADIUS,
+              z: patrolCenterZ + (Math.random() - 0.5) * SQUAD_RADIUS
+            };
+          }
+
           // Move toward patrol target
           const dx = enemy.patrolTarget.x - enemy.x;
           const dz = enemy.patrolTarget.z - enemy.z;

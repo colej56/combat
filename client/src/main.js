@@ -5533,6 +5533,8 @@ function shoot() {
         const playerMesh = state.players[id];
         if (hit.object === playerMesh) {
           socket.emit('hit', { targetId: id, damage: weapon.damage });
+          showHitMarker('hit');
+          showDamageNumber(hit.point, weapon.damage);
         }
       }
 
@@ -5549,6 +5551,7 @@ function shoot() {
           if (hitEnemy) {
             socket.emit('hitEnemy', { enemyId: id, damage: weapon.damage });
             createHitEffect(hit.point, 0xff0000);
+            showDamageNumber(hit.point, weapon.damage);
           }
         }
       }
@@ -5663,7 +5666,7 @@ const euler = new THREE.Euler(0, 0, 0, 'YXZ');
 const PI_2 = Math.PI / 2;
 
 function onMouseMove(event) {
-  if (!state.isPlaying) return;
+  if (!state.isPlaying || state.isDying || state.isDead) return;
 
   const movementX = event.movementX || 0;
   const movementY = event.movementY || 0;
@@ -5734,8 +5737,10 @@ async function startGame(difficulty) {
     // Reset game timer
     gameStartTime = Date.now();
 
-    // Reset position
+    // Reset position and rotation
     camera.position.set(0, PLAYER_HEIGHT, 0);
+    euler.set(0, 0, 0, 'YXZ');
+    camera.quaternion.setFromEuler(euler);
 
     // Update UI
     mainMenu.classList.add('hidden');
@@ -5932,9 +5937,9 @@ function respawn() {
   // Reset health
   state.health = 100;
 
-  // Reset camera rotation
-  camera.rotation.z = 0;
-  camera.rotation.x = 0;
+  // Reset camera rotation - use euler to properly reset quaternion
+  euler.set(0, camera.rotation.y, 0, 'YXZ'); // Keep yaw (facing direction), reset pitch and roll
+  camera.quaternion.setFromEuler(euler);
 
   // Random respawn position
   camera.position.set(
@@ -6112,19 +6117,105 @@ function createPlayerLabel(name, team) {
   canvas.height = 64;
   const ctx = canvas.getContext('2d');
 
-  // Draw name
-  ctx.fillStyle = team === 'red' ? '#e74c3c' : team === 'blue' ? '#3498db' : '#f39c12';
-  ctx.font = 'bold 32px Arial';
+  // Get team color
+  let color;
+  switch (team) {
+    case 'red': color = '#e74c3c'; break;
+    case 'blue': color = '#3498db'; break;
+    case 'green': color = '#27ae60'; break;
+    case 'yellow': color = '#f1c40f'; break;
+    default: color = '#ffffff';
+  }
+
+  // Draw text with outline for visibility
+  ctx.font = 'bold 28px Arial';
   ctx.textAlign = 'center';
-  ctx.fillText(name, 128, 40);
+  ctx.textBaseline = 'middle';
+
+  // Draw black outline
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 4;
+  ctx.strokeText(name, 128, 32);
+
+  // Draw colored fill
+  ctx.fillStyle = color;
+  ctx.fillText(name, 128, 32);
 
   const texture = new THREE.CanvasTexture(canvas);
-  const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
   const sprite = new THREE.Sprite(material);
-  sprite.scale.set(4, 1, 1);
+  sprite.scale.set(3, 0.75, 1);
   sprite.name = 'nameLabel';
 
   return sprite;
+}
+
+// Create player health bar
+function createPlayerHealthBar() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 16;
+  const ctx = canvas.getContext('2d');
+
+  // Background (dark)
+  ctx.fillStyle = '#333333';
+  ctx.fillRect(0, 0, 128, 16);
+
+  // Border
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(0, 0, 128, 16);
+
+  // Health fill (green, will be updated)
+  ctx.fillStyle = '#44ff44';
+  ctx.fillRect(2, 2, 124, 12);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(2, 0.25, 1);
+  sprite.name = 'healthBar';
+  sprite.userData.canvas = canvas;
+  sprite.userData.texture = texture;
+
+  return sprite;
+}
+
+// Update player health bar
+function updatePlayerHealthBar(healthBar, health, maxHealth = 100) {
+  const canvas = healthBar.userData.canvas;
+  if (!canvas) return;
+
+  const ctx = canvas.getContext('2d');
+  const healthPercent = Math.max(0, Math.min(1, health / maxHealth));
+
+  // Clear canvas
+  ctx.clearRect(0, 0, 128, 16);
+
+  // Background (dark)
+  ctx.fillStyle = '#333333';
+  ctx.fillRect(0, 0, 128, 16);
+
+  // Health fill with color based on health level
+  let healthColor;
+  if (healthPercent > 0.6) {
+    healthColor = '#44ff44'; // Green
+  } else if (healthPercent > 0.3) {
+    healthColor = '#ffaa00'; // Orange
+  } else {
+    healthColor = '#ff4444'; // Red
+  }
+
+  ctx.fillStyle = healthColor;
+  ctx.fillRect(2, 2, 124 * healthPercent, 12);
+
+  // Border
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(0, 0, 128, 16);
+
+  // Update texture
+  healthBar.userData.texture.needsUpdate = true;
 }
 
 // Pointer lock change handler
@@ -6416,6 +6507,11 @@ socket.on('players', (players) => {
       nameLabel.position.y = 1.8;
       mesh.add(nameLabel);
 
+      // Add health bar
+      const healthBar = createPlayerHealthBar();
+      healthBar.position.y = 1.5;
+      mesh.add(healthBar);
+
       scene.add(mesh);
       state.players[id] = { mesh, data: playerData };
       collidableObjects.push(mesh);
@@ -6435,6 +6531,14 @@ socket.on('players', (players) => {
         const nameLabel = createPlayerLabel(playerData.name, playerData.team);
         nameLabel.position.y = 1.8;
         player.mesh.add(nameLabel);
+      }
+
+      // Update health bar
+      if (playerData.health !== undefined) {
+        const healthBar = player.mesh.getObjectByName('healthBar');
+        if (healthBar) {
+          updatePlayerHealthBar(healthBar, playerData.health);
+        }
       }
 
       player.data = playerData;
@@ -6473,6 +6577,7 @@ socket.on('playerDeath', (data) => {
     state.kills++;
     state.killStreak++;
     checkKillStreakRewards();
+    showHitMarker('kill');
   }
 
   // Update stats for other players
@@ -6942,6 +7047,15 @@ socket.on('playerHit', (data) => {
     if (state.health <= 0) {
       handleDeath('Player');
     }
+  } else {
+    // Update other player's health bar
+    const otherPlayer = state.players[data.targetId];
+    if (otherPlayer) {
+      const healthBar = otherPlayer.mesh.getObjectByName('healthBar');
+      if (healthBar) {
+        updatePlayerHealthBar(healthBar, data.health);
+      }
+    }
   }
 });
 
@@ -6976,11 +7090,71 @@ socket.on('enemyAttack', (data) => {
 
 socket.on('enemyHit', (data) => {
   playSound('enemyHit');
+  showHitMarker('hit');
 });
+
+// ==================== HIT FEEDBACK SYSTEM ====================
+const hitMarker = document.getElementById('hit-marker');
+
+function showHitMarker(type = 'hit') {
+  if (!hitMarker) return;
+
+  // Remove previous classes
+  hitMarker.classList.remove('show', 'headshot', 'kill');
+
+  // Force reflow to restart animation
+  void hitMarker.offsetWidth;
+
+  // Add appropriate class
+  if (type === 'kill') {
+    hitMarker.classList.add('kill');
+  } else if (type === 'headshot') {
+    hitMarker.classList.add('headshot');
+  }
+
+  hitMarker.classList.add('show');
+
+  // Play hit sound based on type
+  if (type === 'kill') {
+    playSound('kill');
+  }
+}
+
+function showDamageNumber(worldPosition, damage, isCritical = false) {
+  // Convert 3D world position to 2D screen position
+  const screenPos = worldPosition.clone().project(camera);
+
+  // Check if position is in front of camera
+  if (screenPos.z > 1) return;
+
+  const x = (screenPos.x * 0.5 + 0.5) * window.innerWidth;
+  const y = (-screenPos.y * 0.5 + 0.5) * window.innerHeight;
+
+  // Create damage number element
+  const damageEl = document.createElement('div');
+  damageEl.className = 'damage-number' + (isCritical ? ' critical' : '');
+  damageEl.textContent = Math.round(damage);
+
+  // Add random horizontal offset for variety
+  const offsetX = (Math.random() - 0.5) * 40;
+  damageEl.style.left = `${x + offsetX}px`;
+  damageEl.style.top = `${y}px`;
+
+  document.body.appendChild(damageEl);
+
+  // Remove after animation completes
+  setTimeout(() => {
+    damageEl.remove();
+  }, 1000);
+}
 
 socket.on('enemyDeath', (data) => {
   playSound('enemyDeath');
-  console.log(`Enemy ${data.enemyId} was killed!`);
+
+  // Show kill hit marker if we killed this enemy
+  if (data.killerId === socket.id) {
+    showHitMarker('kill');
+  }
 
   // Track kill if we killed this enemy
   if (data.killerId === socket.id) {

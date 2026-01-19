@@ -55,6 +55,81 @@
       display: none;
     }
 
+    /* Hit Marker */
+    #hit-marker {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 30px;
+      height: 30px;
+      pointer-events: none;
+      opacity: 0;
+      z-index: 100;
+    }
+    #hit-marker::before,
+    #hit-marker::after {
+      content: '';
+      position: absolute;
+      background: #ff4444;
+      transform-origin: center;
+    }
+    #hit-marker::before {
+      width: 3px;
+      height: 15px;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%) rotate(45deg);
+    }
+    #hit-marker::after {
+      width: 3px;
+      height: 15px;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%) rotate(-45deg);
+    }
+    #hit-marker.show {
+      animation: hitMarkerPop 0.2s ease-out forwards;
+    }
+    #hit-marker.headshot::before,
+    #hit-marker.headshot::after {
+      background: #ff0000;
+    }
+    #hit-marker.kill::before,
+    #hit-marker.kill::after {
+      background: #ff0000;
+      height: 20px;
+    }
+    @keyframes hitMarkerPop {
+      0% { opacity: 1; transform: translate(-50%, -50%) scale(0.5); }
+      50% { opacity: 1; transform: translate(-50%, -50%) scale(1.2); }
+      100% { opacity: 0; transform: translate(-50%, -50%) scale(1); }
+    }
+
+    /* Damage Numbers */
+    .damage-number {
+      position: fixed;
+      font-family: 'Arial Black', sans-serif;
+      font-weight: bold;
+      font-size: 18px;
+      color: #ff4444;
+      text-shadow: 2px 2px 2px black, -1px -1px 1px black;
+      pointer-events: none;
+      z-index: 1000;
+      animation: damageFloat 1s ease-out forwards;
+    }
+    .damage-number.critical {
+      color: #ff0000;
+      font-size: 24px;
+    }
+    .damage-number.heal {
+      color: #44ff44;
+    }
+    @keyframes damageFloat {
+      0% { opacity: 1; transform: translateY(0) scale(1); }
+      100% { opacity: 0; transform: translateY(-50px) scale(0.8); }
+    }
+
     /* Health bar */
     #health-bar {
       position: absolute;
@@ -2174,6 +2249,7 @@
     <div id="death-animation-overlay"></div>
     <div id="pause-overlay"></div>
     <div id="crosshair" class="hidden"></div>
+    <div id="hit-marker"></div>
 
     <!-- Minimap -->
     <div id="minimap-container">
