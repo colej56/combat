@@ -531,25 +531,177 @@
       color: #888;
     }
 
-    /* Controls display in menu */
-    .controls-info {
-      margin-top: 30px;
-      padding-top: 20px;
-      border-top: 1px solid #444;
-      text-align: left;
+    /* Tutorial Prompt */
+    #tutorial-prompt {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.9);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
     }
-    .controls-info h3 {
-      font-size: 16px;
+    #tutorial-prompt.hidden {
+      display: none;
+    }
+    .tutorial-prompt-box {
+      background: rgba(20, 20, 30, 0.95);
+      border: 2px solid #f39c12;
+      border-radius: 15px;
+      padding: 40px;
+      text-align: center;
+      max-width: 400px;
+    }
+    .tutorial-prompt-box h2 {
+      color: #f39c12;
+      font-size: 28px;
       margin-bottom: 15px;
-      color: #888;
+    }
+    .tutorial-prompt-box p {
+      color: #aaa;
+      font-size: 16px;
+      margin-bottom: 25px;
+    }
+    .tutorial-prompt-buttons {
+      display: flex;
+      gap: 15px;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+    .tutorial-btn {
+      padding: 12px 25px;
+      font-size: 16px;
+      font-weight: bold;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .tutorial-btn.yes {
+      background: linear-gradient(135deg, #27ae60, #2ecc71);
+      color: white;
+    }
+    .tutorial-btn.yes:hover {
+      box-shadow: 0 0 15px #27ae60;
+      transform: scale(1.05);
+    }
+    .tutorial-btn.no {
+      background: linear-gradient(135deg, #555, #666);
+      color: white;
+    }
+    .tutorial-btn.no:hover {
+      box-shadow: 0 0 15px #555;
+      transform: scale(1.05);
+    }
+    .tutorial-remember {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: #666;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .tutorial-remember input {
+      cursor: pointer;
+    }
+
+    /* Tutorial Overlay */
+    #tutorial-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+    }
+    #tutorial-overlay.hidden {
+      display: none;
+    }
+    .tutorial-content {
+      background: rgba(20, 20, 30, 0.95);
+      border: 2px solid #3498db;
+      border-radius: 15px;
+      padding: 40px;
+      max-width: 500px;
+      width: 90%;
+    }
+    .tutorial-step h2 {
+      color: #3498db;
+      font-size: 24px;
+      margin-bottom: 20px;
       text-align: center;
     }
-    .controls-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px 30px;
+    #tutorial-description {
+      color: #ddd;
+      font-size: 16px;
+      line-height: 1.8;
+      margin-bottom: 25px;
+    }
+    #tutorial-description .key {
+      display: inline-block;
+      background: #333;
+      border: 1px solid #555;
+      border-radius: 4px;
+      padding: 3px 10px;
+      margin: 2px;
+      color: #f39c12;
+      font-family: monospace;
+      font-weight: bold;
+    }
+    .tutorial-progress {
+      text-align: center;
+      color: #666;
       font-size: 14px;
-      color: #aaa;
+      margin-bottom: 20px;
+    }
+    .tutorial-buttons {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+    }
+    .tutorial-nav-btn {
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: bold;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      background: linear-gradient(135deg, #3498db, #2980b9);
+      color: white;
+      transition: all 0.2s;
+    }
+    .tutorial-nav-btn:hover {
+      box-shadow: 0 0 10px #3498db;
+      transform: scale(1.05);
+    }
+    .tutorial-nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    .tutorial-nav-btn.skip {
+      background: linear-gradient(135deg, #555, #666);
+    }
+    .tutorial-nav-btn.skip:hover {
+      box-shadow: 0 0 10px #555;
+    }
+    .tutorial-nav-btn.reset {
+      background: linear-gradient(135deg, #e67e22, #d35400);
+    }
+    .tutorial-nav-btn.reset:hover {
+      box-shadow: 0 0 10px #e67e22;
+    }
+    .tutorial-buttons.secondary {
+      margin-top: 10px;
     }
 
     /* Death Screen */
@@ -1900,6 +2052,72 @@
       border-radius: 0 0 3px 3px;
     }
 
+    /* Loading Screen */
+    #loading-screen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      transition: opacity 0.5s ease-out;
+    }
+    #loading-screen.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    #loading-screen.removed {
+      display: none;
+    }
+    #loading-title {
+      font-size: 72px;
+      color: #e74c3c;
+      text-shadow: 0 0 20px rgba(231, 76, 60, 0.5), 4px 4px 8px black;
+      letter-spacing: 8px;
+      margin-bottom: 10px;
+    }
+    #loading-subtitle {
+      font-size: 16px;
+      color: #888;
+      margin-bottom: 50px;
+    }
+    #loading-bar-container {
+      width: 300px;
+      height: 8px;
+      background: rgba(0, 0, 0, 0.5);
+      border-radius: 4px;
+      overflow: hidden;
+      border: 1px solid #333;
+    }
+    #loading-bar {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #e74c3c, #f39c12);
+      transition: width 0.3s ease-out;
+      border-radius: 4px;
+    }
+    #loading-text {
+      margin-top: 15px;
+      font-size: 14px;
+      color: #666;
+    }
+    #loading-tip {
+      position: absolute;
+      bottom: 50px;
+      font-size: 14px;
+      color: #555;
+      max-width: 400px;
+      text-align: center;
+    }
+    #loading-tip span {
+      color: #f39c12;
+    }
+
     /* Weather Indicator */
     #weather-indicator {
       position: absolute;
@@ -1931,6 +2149,17 @@
   </style>
 </head>
 <body>
+  <!-- Loading Screen -->
+  <div id="loading-screen">
+    <div id="loading-title">COMBAT</div>
+    <div id="loading-subtitle">A Multiplayer Survival Shooter</div>
+    <div id="loading-bar-container">
+      <div id="loading-bar"></div>
+    </div>
+    <div id="loading-text">Initializing...</div>
+    <div id="loading-tip">TIP: Press <span>F</span> to toggle your flashlight at night</div>
+  </div>
+
   <div id="hud">
     <div id="damage-overlay"></div>
     <div id="death-animation-overlay"></div>
@@ -2155,21 +2384,41 @@
           <div class="difficulty-desc">Enemies deal 150% damage, faster attacks</div>
         </button>
       </div>
-      <div class="controls-info">
-        <h3>Controls</h3>
-        <div class="controls-grid">
-          <span>WASD - Move</span>
-          <span>Mouse - Look</span>
-          <span>Space - Jump</span>
-          <span>Shift - Sprint</span>
-          <span>Left Click - Shoot</span>
-          <span>R - Reload</span>
-          <span>1/2/3 - Weapons</span>
-          <span>E - Enter/Exit Vehicle</span>
-          <span>T - All Chat</span>
-          <span>Y - Team Chat</span>
-          <span>L - Perks</span>
-          <span>ESC - Pause</span>
+    </div>
+
+    <!-- Tutorial Prompt -->
+    <div id="tutorial-prompt" class="hidden">
+      <div class="tutorial-prompt-box">
+        <h2>Welcome to Combat!</h2>
+        <p>Would you like to view the tutorial?</p>
+        <div class="tutorial-prompt-buttons">
+          <button class="tutorial-btn yes" id="tutorial-yes">Yes, show me</button>
+          <button class="tutorial-btn no" id="tutorial-no">No, I know how to play</button>
+        </div>
+        <label class="tutorial-remember">
+          <input type="checkbox" id="tutorial-remember-checkbox">
+          <span>Remember my choice</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Tutorial Overlay -->
+    <div id="tutorial-overlay" class="hidden">
+      <div class="tutorial-content">
+        <div class="tutorial-step">
+          <h2 id="tutorial-title">Movement</h2>
+          <div id="tutorial-description"></div>
+        </div>
+        <div class="tutorial-progress">
+          <span id="tutorial-step-num">1</span> / <span id="tutorial-step-total">8</span>
+        </div>
+        <div class="tutorial-buttons">
+          <button class="tutorial-nav-btn" id="tutorial-prev">Previous</button>
+          <button class="tutorial-nav-btn" id="tutorial-next">Next</button>
+        </div>
+        <div class="tutorial-buttons secondary">
+          <button class="tutorial-nav-btn skip" id="tutorial-skip">Skip Tutorial</button>
+          <button class="tutorial-nav-btn reset" id="tutorial-reset">Reset Tutorial Preference</button>
         </div>
       </div>
     </div>

@@ -2,6 +2,241 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { io } from 'socket.io-client';
 
+// ==================== LOADING SCREEN ====================
+const loadingScreen = document.getElementById('loading-screen');
+const loadingBar = document.getElementById('loading-bar');
+const loadingText = document.getElementById('loading-text');
+const loadingTip = document.getElementById('loading-tip');
+
+const LOADING_TIPS = [
+  'TIP: Press <span>F</span> to toggle your flashlight at night',
+  'TIP: Use <span>Shift</span> to sprint faster',
+  'TIP: Press <span>Tab</span> to open your inventory',
+  'TIP: Vehicles spawn near the origin and in chunks',
+  'TIP: The portal is located at coordinates (100, 100)',
+  'TIP: Press <span>R</span> to reload your weapon',
+  'TIP: Headshots deal extra damage',
+  'TIP: Press <span>E</span> to enter vehicles and search crates',
+  'TIP: Health pickups restore 50 HP',
+  'TIP: Press <span>L</span> to view your perks'
+];
+
+function updateLoadingProgress(percent, text) {
+  if (loadingBar) loadingBar.style.width = `${percent}%`;
+  if (loadingText) loadingText.textContent = text;
+}
+
+function showRandomTip() {
+  if (loadingTip) {
+    const tip = LOADING_TIPS[Math.floor(Math.random() * LOADING_TIPS.length)];
+    loadingTip.innerHTML = tip;
+  }
+}
+
+function hideLoadingScreen() {
+  if (loadingScreen) {
+    loadingScreen.classList.add('hidden');
+    // Remove from DOM after transition
+    setTimeout(() => {
+      loadingScreen.classList.add('removed');
+    }, 500);
+  }
+}
+
+// Show random tip on load
+showRandomTip();
+updateLoadingProgress(5, 'Loading assets...');
+
+// ==================== TUTORIAL SYSTEM ====================
+const TUTORIAL_STEPS = [
+  {
+    title: 'Movement',
+    description: `
+      <span class="key">W</span> Move forward<br>
+      <span class="key">A</span> Move left<br>
+      <span class="key">S</span> Move backward<br>
+      <span class="key">D</span> Move right<br>
+      <span class="key">Space</span> Jump<br>
+      <span class="key">Shift</span> Sprint (hold)
+    `
+  },
+  {
+    title: 'Looking Around',
+    description: `
+      Move your <span class="key">Mouse</span> to look around.<br><br>
+      Your camera will follow your mouse movement.
+    `
+  },
+  {
+    title: 'Combat',
+    description: `
+      <span class="key">Left Click</span> Shoot<br>
+      <span class="key">R</span> Reload weapon<br>
+      <span class="key">1</span> <span class="key">2</span> <span class="key">3</span> <span class="key">4</span> Switch weapons<br><br>
+      Aim at enemies to deal damage!
+    `
+  },
+  {
+    title: 'Vehicles',
+    description: `
+      <span class="key">E</span> Enter/Exit vehicles<br><br>
+      Vehicles spawn near the origin and throughout the map.<br>
+      Use <span class="key">WASD</span> to drive.
+    `
+  },
+  {
+    title: 'Interactions',
+    description: `
+      <span class="key">E</span> Search loot crates<br>
+      <span class="key">E</span> Open doors<br>
+      <span class="key">E</span> Talk to NPCs<br>
+      <span class="key">F</span> Toggle flashlight (useful at night!)
+    `
+  },
+  {
+    title: 'Inventory & Perks',
+    description: `
+      <span class="key">Tab</span> Open inventory (weapon attachments)<br>
+      <span class="key">L</span> Open perks menu<br><br>
+      Unlock attachments by getting kills with each weapon!
+    `
+  },
+  {
+    title: 'Communication',
+    description: `
+      <span class="key">T</span> Open all chat<br>
+      <span class="key">Y</span> Open team chat<br><br>
+      Communicate with other players in multiplayer!
+    `
+  },
+  {
+    title: 'Other Controls',
+    description: `
+      <span class="key">ESC</span> Pause game<br>
+      <span class="key">F3</span> Toggle performance stats<br><br>
+      The portal at coordinates (100, 100) leads to victory!
+    `
+  }
+];
+
+let tutorialStep = 0;
+let pendingGameStart = null;
+
+const tutorialPrompt = document.getElementById('tutorial-prompt');
+const tutorialOverlay = document.getElementById('tutorial-overlay');
+const tutorialTitle = document.getElementById('tutorial-title');
+const tutorialDescription = document.getElementById('tutorial-description');
+const tutorialStepNum = document.getElementById('tutorial-step-num');
+const tutorialStepTotal = document.getElementById('tutorial-step-total');
+const tutorialPrevBtn = document.getElementById('tutorial-prev');
+const tutorialNextBtn = document.getElementById('tutorial-next');
+const tutorialSkipBtn = document.getElementById('tutorial-skip');
+const tutorialResetBtn = document.getElementById('tutorial-reset');
+const tutorialYesBtn = document.getElementById('tutorial-yes');
+const tutorialNoBtn = document.getElementById('tutorial-no');
+const tutorialRememberCheckbox = document.getElementById('tutorial-remember-checkbox');
+
+function showTutorialPrompt(gameStartCallback) {
+  // Check if user has saved preference
+  const skipTutorial = localStorage.getItem('skipTutorial');
+  if (skipTutorial === 'true') {
+    gameStartCallback();
+    return;
+  }
+
+  pendingGameStart = gameStartCallback;
+  tutorialPrompt.classList.remove('hidden');
+}
+
+function hideTutorialPrompt() {
+  tutorialPrompt.classList.add('hidden');
+}
+
+function showTutorial() {
+  hideTutorialPrompt();
+  tutorialStep = 0;
+  tutorialStepTotal.textContent = TUTORIAL_STEPS.length;
+  updateTutorialStep();
+  tutorialOverlay.classList.remove('hidden');
+}
+
+function hideTutorial() {
+  tutorialOverlay.classList.add('hidden');
+  if (pendingGameStart) {
+    pendingGameStart();
+    pendingGameStart = null;
+  }
+}
+
+function updateTutorialStep() {
+  const step = TUTORIAL_STEPS[tutorialStep];
+  tutorialTitle.textContent = step.title;
+  tutorialDescription.innerHTML = step.description;
+  tutorialStepNum.textContent = tutorialStep + 1;
+
+  // Update button states
+  tutorialPrevBtn.disabled = tutorialStep === 0;
+  tutorialNextBtn.textContent = tutorialStep === TUTORIAL_STEPS.length - 1 ? 'Finish' : 'Next';
+}
+
+function nextTutorialStep() {
+  if (tutorialStep < TUTORIAL_STEPS.length - 1) {
+    tutorialStep++;
+    updateTutorialStep();
+  } else {
+    hideTutorial();
+  }
+}
+
+function prevTutorialStep() {
+  if (tutorialStep > 0) {
+    tutorialStep--;
+    updateTutorialStep();
+  }
+}
+
+// Tutorial button event listeners (set up after DOM is ready)
+if (tutorialYesBtn) {
+  tutorialYesBtn.addEventListener('click', () => {
+    if (tutorialRememberCheckbox && tutorialRememberCheckbox.checked) {
+      localStorage.setItem('skipTutorial', 'false');
+    }
+    showTutorial();
+  });
+}
+
+if (tutorialNoBtn) {
+  tutorialNoBtn.addEventListener('click', () => {
+    if (tutorialRememberCheckbox && tutorialRememberCheckbox.checked) {
+      localStorage.setItem('skipTutorial', 'true');
+    }
+    hideTutorialPrompt();
+    if (pendingGameStart) {
+      pendingGameStart();
+      pendingGameStart = null;
+    }
+  });
+}
+
+if (tutorialNextBtn) {
+  tutorialNextBtn.addEventListener('click', nextTutorialStep);
+}
+
+if (tutorialPrevBtn) {
+  tutorialPrevBtn.addEventListener('click', prevTutorialStep);
+}
+
+if (tutorialSkipBtn) {
+  tutorialSkipBtn.addEventListener('click', hideTutorial);
+}
+
+if (tutorialResetBtn) {
+  tutorialResetBtn.addEventListener('click', () => {
+    localStorage.removeItem('skipTutorial');
+    alert('Tutorial preference reset! You will be asked about the tutorial next time you start a game.');
+  });
+}
+
 // ==================== AUDIO SYSTEM ====================
 const AudioContext = window.AudioContext || window.webkitAudioContext;
 let audioCtx = null;
@@ -3335,6 +3570,7 @@ renderer.shadowMap.enabled = true;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 document.body.appendChild(renderer.domElement);
+updateLoadingProgress(15, 'Setting up renderer...');
 
 // ==================== GRAPHICS SETTINGS ====================
 const GRAPHICS_PRESETS = {
@@ -3408,6 +3644,8 @@ applyGraphicsSettings(currentGraphicsQuality, true);
 function getCurrentShadowMapSize() {
   return GRAPHICS_PRESETS[currentGraphicsQuality].shadowMapSize || 1024;
 }
+
+updateLoadingProgress(25, 'Creating sky and lighting...');
 
 // Create gradient sky using a large sphere
 const skyGeometry = new THREE.SphereGeometry(400, 32, 32);
@@ -3620,6 +3858,8 @@ function updateTimeDisplay() {
 
   timeDisplay.textContent = `${timeString} - ${periodName}`;
 }
+
+updateLoadingProgress(40, 'Preparing terrain system...');
 
 // ==================== INFINITE TERRAIN SYSTEM ====================
 const CHUNK_SIZE = 64;
@@ -4571,7 +4811,10 @@ function updateChunks(playerX, playerZ) {
 }
 
 // Initialize chunks around spawn
+updateLoadingProgress(60, 'Generating terrain chunks...');
 updateChunks(0, 0);
+
+updateLoadingProgress(80, 'Spawning vehicles...');
 
 // Spawn initial vehicles near origin
 spawnInitialVehicles();
@@ -5702,7 +5945,8 @@ function respawn() {
 document.querySelectorAll('.difficulty-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const difficulty = btn.dataset.difficulty;
-    startGame(difficulty);
+    // Show tutorial prompt before starting game
+    showTutorialPrompt(() => startGame(difficulty));
   });
 });
 
@@ -5956,6 +6200,13 @@ document.addEventListener('keydown', (event) => {
     } else if (state.isPlaying && !state.isPaused) {
       openPerkMenu();
     }
+    return;
+  }
+
+  // F3 key to toggle performance stats
+  if (event.code === 'F3') {
+    event.preventDefault();
+    togglePerformanceStats();
     return;
   }
 
@@ -7922,6 +8173,15 @@ const cachedDoorPrompt = document.getElementById('door-prompt');
 const cachedFpsCounter = document.getElementById('fps-counter');
 const cachedRenderStats = document.getElementById('render-stats');
 
+// Performance stats visibility (toggle with F3)
+let performanceStatsVisible = true;
+
+function togglePerformanceStats() {
+  performanceStatsVisible = !performanceStatsVisible;
+  if (cachedFpsCounter) cachedFpsCounter.style.display = performanceStatsVisible ? 'block' : 'none';
+  if (cachedRenderStats) cachedRenderStats.style.display = performanceStatsVisible ? 'block' : 'none';
+}
+
 // FPS tracking
 let fpsFrames = 0;
 let fpsLastTime = performance.now();
@@ -8198,5 +8458,11 @@ const savedServerAddress = localStorage.getItem('combatServerAddress');
 if (savedServerAddress) {
   document.getElementById('server-address').value = savedServerAddress;
 }
+
+// Finish loading and show main menu
+updateLoadingProgress(100, 'Ready!');
+setTimeout(() => {
+  hideLoadingScreen();
+}, 300);
 
 animate();
